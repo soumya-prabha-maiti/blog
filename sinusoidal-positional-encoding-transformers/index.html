@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Visualizations</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('post'));"></script>
+<link rel="stylesheet" href="../assets/blog.css">
+<script defer src="../assets/posts.js"></script>
+<script defer src="../assets/post-header.js"></script>
+</head>
+<body>
+<article id="post">
+  <p>Shuffle the five words in "the dog chased the ball" and you still have all five words, but most of the meaning is gone. Order carries a lot of what a sentence means. A transformer does not read left to right the way we do. Attention looks at every token at once, so on its own it has no way to tell the first token from the fifth.</p>
+
+  <p>Positional encoding fills that gap. Before the sequence reaches the transformer, every token embedding gets a second vector added to it saying where the token sits. First word gets the vector for position 0, second gets position 1, and so on. The model then has both facts in one place: <em>what</em> the token is, and <em>where</em> it showed up.</p>
+
+  <h2>Why sine and cosine?</h2>
+  <p>The original Transformer paper fills that vector with sine and cosine waves, one wavelength per dimension. Some dimensions flip quickly from one position to the next. Others crawl, barely moving until you have gone a long way down the sequence.</p>
+
+  <p>One wave on its own is useless for identifying a position, because it comes back around and hands you a value it already gave earlier. A stack of waves running at different rates does not repeat so obligingly, and together they pin a position down. Clocks work this way. The second hand, the minute hand and the hour hand each keep revisiting old positions, but read all three at once and you know where you are.</p>
+
+  <h2>The formula</h2>
+  <p>For an embedding size of \(d_{\text{model}}\), the encoding at position \(pos\) is defined two dimensions at a time:</p>
+
+  \[\text{PE}(pos,\, 2i) = \sin\!\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)\]
+  \[\text{PE}(pos,\, 2i+1) = \cos\!\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)\]
+
+  <p>with \(i = 0, 1, 2, \ldots, \frac{d_{\text{model}}}{2} - 1\). Even dimensions take the sine, odd dimensions take the cosine. Each neighboring pair \((2i, 2i+1)\) runs at a single frequency, the two waves 90° apart in phase.</p>
+
+  <p>The 10,000 is there to spread the wavelengths out. It is not a cap on sequence length, tempting as that reading is. What it does is space the frequencies geometrically, so low-numbered dimensions oscillate fast and high-numbered ones drift. The model ends up with positional information at several scales at once.</p>
+
+  <h2>A rotating-vector view</h2>
+  <p>Sine and cosine are projections of a point travelling around a circle, and that is the view the visualization below is built on. Dimension by dimension:</p>
+
+  \[\text{PE}(pos,\, d) = \sin\!\left(\frac{pos}{10000^{d/d_{\text{model}}}}\right) = \cos\!\left(\frac{pos}{10000^{d/d_{\text{model}}}} - \frac{\pi}{2}\right) = \text{Re}\!\left(e^{\,j\left(\frac{pos}{10000^{d/d_{\text{model}}}} - \frac{\pi}{2}\right)}\right),\quad \text{if } d \text{ is even}\]
+  \[\text{PE}(pos,\, d) = \cos\!\left(\frac{pos}{10000^{(d-1)/d_{\text{model}}}}\right) = \text{Re}\!\left(e^{\,j\cdot\frac{pos}{10000^{(d-1)/d_{\text{model}}}}}\right),\quad \text{if } d \text{ is odd}\]
+
+  <p>with \(d = 0, 1, 2, \ldots, d_{\text{model}} - 1\). Ignore the complex exponential if you like; it earns its place by making the geometry easy to see. As the position advances each phasor turns, and its horizontal projection is the number that actually lands in that dimension.</p>
+
+  <h2>How to read the visualization</h2>
+  <p>Every circle is one embedding dimension. Blue for sine, orange for cosine. The colored arm is the phasor, and the green dot on the horizontal axis is its projection, repeated underneath as a signed bar and as a number.</p>
+
+  <p>Start with dimensions 0 and 1. Same rotation speed, different starting angle, which is the whole of what separates a sine from a cosine. Then look right. Those phasors turn more slowly, with longer wavelengths, printed as \(\lambda\) under each bar. Every one of these rotations, fast and slow, is one component of the vector for whichever token is highlighted.</p>
+
+  <p>Each word counts as one token here, which keeps things simple. The sliders change the embedding size, the sequence length, how many dimensions are on screen and how fast the sweep runs. Pause on a single word and read across the row. Then stretch the sequence length out and watch the fast dimensions cycle over and over while the slow ones still tell you roughly where in the sentence you are.</p>
+
+  <h2>What it buys you</h2>
+  <p>Nothing here is learned, so the scheme costs no parameters. The smoothness buys something less obvious too. Move a position by a fixed offset and every sine and cosine pair transforms predictably, which is convenient when attention wants to express something like "the previous token" or "three positions earlier".</p>
+
+  <p>Most current architectures have moved on to learned position embeddings, or to relative schemes like rotary embeddings. Sinusoidal encoding is still the clearest place to start, and the circles below are the reason why.</p>
+
+<div id="controls">
+  <label>Embedding dimension (d_model): <input type="range" id="sl-D_MODEL" min="32" max="512" step="16" value="128"><span id="v-D_MODEL">128</span></label>
+  <label>Max sequence length: <input type="range" id="sl-maxpos" min="16" max="256" step="8" value="64"><span id="v-maxpos">64</span></label>
+  <label>Visible dimensions: <input type="range" id="sl-dims" min="2" max="512" step="2" value="12"><span id="v-dims">12</span></label>
+  <label>Speed (pos/s): <input type="range" id="sl-speed" min="1" max="20" value="5"><span id="v-speed">5</span></label>
+  <button id="btn-play">⏸ Pause</button>
+  <button id="btn-reset">↺ Reset</button>
+</div>
+<div id="canvas-wrap"><div id="spacer"></div><canvas id="c"></canvas></div>
+<div id="text-section"></div>
+</article>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('canvas-wrap');
+const spacer = document.getElementById('spacer');
+const textSection = document.getElementById('text-section');
+
+const sampleText = "Lorem ipsum dolor sit amet consectetur adipisicing elit Autem quasi hic consequatur dignissimos animi ut ratione accusantium quidem vitae eius vel minima aspernatur illo quos voluptatem dolores harum minus dolorum eveniet fuga atque possimus illum repellat Suscipit laborum quasi veritatis quam ut similique molestias quas consectetur velit id asperiores voluptas maiores veniam nam iusto doloribus Possimus id adipisci ipsam nihil ipsum assumenda harum voluptatum ea ut provident iure hic fuga sed dolore in molestias rem quo aut culpa perspiciatis cupiditate quidem velit dicta mollitia Atque quis ab odio cupiditate accusamus commodi facilis Quis qui consequuntur veniam officiis itaque doloribus voluptate velit libero nemo aliquam in autem vel eligendi expedita quod eaque provident tempore asperiores quae rerum Sapiente vel itaque deserunt unde ab suscipit vitae ipsam iste non eaque expedita totam quisquam consequuntur neque maxime doloremque perferendis voluptatibus veniam a Minus totam excepturi accusamus enim vero illum nostrum iure magni distinctio architecto eius impedit necessitatibus id amet veritatis iusto vitae placeat possimus Inventore ea officiis tenetur sit sapiente numquam voluptatum quos Neque aperiam placeat necessitatibus eum veniam quae magnam at ullam expedita maxime recusandae quidem? Praesentium tempore perspiciatis quia impedit incidunt reprehenderit modi eveniet dolor voluptatum eum debitis exercitationem animi optio similique libero deleniti culpa Inventore sequi autem perferendis aliquid asperiores in labore vero facilis tempore quod nihil excepturi architecto unde Veritatis dolor Consequuntur itaque doloremque illum reprehenderit repellendus quaerat Repudiandae quae deleniti unde ducimus dignissimos delectus veritatis perferendis corporis sed natus molestiae cum odit accusamus veniam? Quibusdam harum libero vel quasi ipsa repellat voluptas nisi velit";
+const words = sampleText.split(' ');
+
+let D_MODEL = 128, maxPos = 64, numDims = 12, speed = 5;
+let pos = 0, playing = true, lastTime = 0;
+
+function buildTextDisplay() {
+  const html = words.slice(0, maxPos).map((w, i) =>
+    `<span class="word" id="word-${i}">${w}</span>`
+  ).join(' ');
+  textSection.innerHTML = `<div class="text-box">${html}</div>`;
+}
+
+function highlightWord() {
+  textSection.querySelectorAll('.word.active').forEach(el => el.classList.remove('active'));
+  const el = document.getElementById(`word-${pos}`);
+  if (el) {
+    el.classList.add('active');
+  }
+}
+
+function getSliders() {
+  D_MODEL = +document.getElementById('sl-D_MODEL').value;
+  maxPos = +document.getElementById('sl-maxpos').value;
+  speed = +document.getElementById('sl-speed').value;
+  const dimsSlider = document.getElementById('sl-dims');
+  dimsSlider.max = D_MODEL;
+  numDims = +dimsSlider.value;
+  document.getElementById('v-D_MODEL').textContent = D_MODEL;
+  document.getElementById('v-maxpos').textContent = maxPos;
+  document.getElementById('v-dims').textContent = numDims;
+  document.getElementById('v-speed').textContent = speed;
+  resize();
+  buildTextDisplay();
+}
+
+function resize() {
+  canvas.width = wrap.clientWidth || window.innerWidth;
+  const colW = 170;
+  const radius = 65;
+  const spinnerCY = 80 + radius;
+  const barY = spinnerCY + radius + 25;
+  const barH = 12;
+  const posDisplayY = barY + barH + 60;
+  canvas.height = posDisplayY + 20;
+  spacer.style.width = (numDims * colW + 80) + 'px';
+}
+
+// ---------------------------------------------- Core PE functions
+function getAngularFreq(d, D_MODEL) {
+  return 1 / Math.pow(10000, (Math.floor(d / 2) * 2) / D_MODEL);
+}
+
+function getPEValue(pos, d, D_MODEL) {
+  const base = pos * getAngularFreq(d, D_MODEL);
+  return d % 2 === 0 ? Math.sin(base) : Math.cos(base);
+}
+
+function getAngle(pos, d, D_MODEL) {
+  const base = pos * getAngularFreq(d, D_MODEL);
+  // Both rotate CCW; sin starts at -π/2 offset so real part = sin(base)
+  return d % 2 === 0 ? (base - Math.PI / 2) : base;
+}
+// ----------------------------------------------
+
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  const scrollX = wrap.scrollLeft;
+  ctx.clearRect(0, 0, W, H);
+
+  const colW = 170;
+  const radius = 65;
+  const barW = radius * 2;
+  const barH = 12;
+  const spinnerCY = 80 + radius;
+  const barY = spinnerCY + radius + 25;
+  const startX = 40 - scrollX;
+  const posDisplayY = barY + barH + 60;
+
+  // Position display (below spinners, centred, single line)
+  ctx.fillStyle = '#e6edf3'; ctx.font = '13px monospace'; ctx.textAlign = 'right';
+  const centerX = W / 2;
+  ctx.fillText(`pos = ${pos} / ${maxPos}`, centerX - 80, posDisplayY);
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(centerX - 70, posDisplayY - 8, 150, 8);
+  ctx.fillStyle = '#238636';
+  ctx.fillRect(centerX - 70, posDisplayY - 8, 150 * (pos / maxPos), 8);
+
+  // Only render visible dims
+  const firstVisible = Math.max(0, Math.floor((scrollX - 40) / colW));
+  const lastVisible = Math.min(numDims - 1, Math.ceil((scrollX + W - 40) / colW));
+
+  for (let d = firstVisible; d <= lastVisible; d++) {
+    const cx = startX + d * colW + colW / 2;
+    const cy = spinnerCY;
+    const angle = getAngle(pos, d, D_MODEL);
+    const peVal = getPEValue(pos, d, D_MODEL);
+    const isSin = d % 2 === 0;
+    const color = isSin ? '#58a6ff' : '#f0883e';
+
+    // Circle
+    ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // Real axis
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath(); ctx.moveTo(cx - radius, cy); ctx.lineTo(cx + radius, cy); ctx.stroke();
+
+    // Phasor
+    const px = cx + Math.cos(angle) * radius;
+    const py = cy - Math.sin(angle) * radius;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(px, py);
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+
+    // Tip dot
+    ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+
+    // Projection line down to real axis
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, cy);
+    ctx.strokeStyle = 'rgba(80,200,120,0.5)'; ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]); ctx.stroke(); ctx.setLineDash([]);
+
+    // Projection dot on real axis
+    ctx.beginPath(); ctx.arc(px, cy, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#4ae168'; ctx.fill();
+
+    // Vertical dashed line from projection down to bar
+    ctx.beginPath(); ctx.moveTo(px, cy + 4); ctx.lineTo(px, barY - 2);
+    ctx.strokeStyle = 'rgba(74,225,104,0.2)'; ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]); ctx.stroke(); ctx.setLineDash([]);
+
+    // Bar background
+    const barLeft = cx - barW / 2;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(barLeft, barY, barW, barH);
+
+    // Bar center line
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx, barY); ctx.lineTo(cx, barY + barH); ctx.stroke();
+
+    // Filled bar
+    const fillW = (peVal / 2) * barW;
+    ctx.fillStyle = color.replace(')', ',0.7)').replace('rgb', 'rgba');
+    ctx.fillRect(cx, barY, fillW, barH);
+
+    // Dim label above
+    ctx.fillStyle = '#aaa'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(`d=${d}`, cx, cy - radius - 18);
+    ctx.fillStyle = '#666';
+    ctx.fillText(isSin ? 'sin' : 'cos', cx, cy - radius - 6);
+
+    // Value below bar
+    ctx.fillStyle = '#ccc'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(peVal.toFixed(3), cx, barY + barH + 14);
+
+    // Wavelength
+    ctx.fillStyle = '#555'; ctx.font = '9px monospace';
+    ctx.fillText(`λ=${(2 * Math.PI / getAngularFreq(d, D_MODEL)).toFixed(1)}`, cx, barY + barH + 26);
+  }
+}
+
+let accumulator = 0;
+
+function animate(time) {
+  if (playing) {
+    const dt = lastTime ? (time - lastTime) / 1000 : 0;
+    accumulator += dt * speed;
+    if (accumulator >= 1) {
+      pos += Math.floor(accumulator);
+      accumulator = accumulator % 1;
+      if (pos > maxPos) pos = 0;
+    }
+  }
+  lastTime = time;
+  draw();
+  highlightWord();
+  requestAnimationFrame(animate);
+}
+
+document.getElementById('sl-D_MODEL').addEventListener('input', function() {
+  const dimsSlider = document.getElementById('sl-dims');
+  dimsSlider.max = this.value;
+  dimsSlider.value = this.value;
+});
+document.querySelectorAll('#controls input').forEach(el => el.addEventListener('input', getSliders));
+document.getElementById('btn-play').addEventListener('click', function() {
+  playing = !playing;
+  this.textContent = playing ? '⏸ Pause' : '▶ Play';
+});
+document.getElementById('btn-reset').addEventListener('click', () => { pos = 0; });
+window.addEventListener('resize', resize);
+
+resize(); getSliders();
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
