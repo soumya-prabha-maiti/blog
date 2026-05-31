@@ -1,0 +1,160 @@
+/* Shared styles for the home page and post pages.
+   Linked from: index.html, sinusoidal-positional-encoding-transformers/index.html */
+
+/* ---------------------------------------------- Base */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; }
+
+/* Shared content column. Widgets live inside <article id="post">, so they
+   inherit this width and need no sizing of their own. */
+:root {
+  --content-width: 900px;
+  --content-gutter: 24px;
+}
+
+/* ---------------------------------------------- Article */
+#post {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 16px var(--content-gutter) 12px;
+  font-size: 15px;
+  color: #e6edf3;
+  line-height: 2;
+}
+#post h1 { font-size: 32px; margin-bottom: 10px; color: #f0f6fc; }
+#post h2 { font-size: 28px; margin-top: 20px; color: #f0f6fc; }
+#post h3 { font-size: 21px; margin-top: 18px; color: #f0f6fc; }
+#post p { margin-top: 14px; }
+#post h2 + p,
+#post h3 + p { margin-top: 6px; }
+
+/* ---------------------------------------------- Controls */
+#controls {
+  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  border: 1px solid #30363d; border-radius: 10px;
+  margin: 8px 0;
+}
+#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+#controls input[type=range] { width: 100px; }
+#controls span { min-width: 30px; text-align: right; }
+#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
+#controls button:hover { background: #2ea043; }
+
+/* ---------------------------------------------- Canvas */
+#canvas-wrap { overflow-x: scroll; overflow-y: hidden; position: relative; min-height: 300px; }
+#spacer { height: 1px; }
+canvas { display: block; position: sticky; left: 0; top: 0; }
+
+/* ---------------------------------------------- Token text */
+#text-section { padding: 12px 0; font-size: 13px; line-height: 1.8; }
+#text-section .text-box { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 14px 18px; white-space: normal; word-wrap: break-word; }
+#text-section .word { display: inline; padding: 2px 4px; border-radius: 3px; }
+#text-section .word.active { background: #238636; color: #fff; }
+
+/* ---------------------------------------------- Tags (shared) */
+.tag, .tag-chip {
+  display: inline-block;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #8b949e;
+  text-decoration: none;
+  line-height: 1.6;
+}
+a.tag:hover, .tag-chip:hover { border-color: #58a6ff; color: #e6edf3; }
+.tag.active, .tag-chip.active {
+  background: #238636;
+  border-color: #2ea043;
+  color: #fff;
+}
+.tag-chip { cursor: pointer; }
+.tag-chip.clear { background: transparent; border-style: dashed; }
+
+/* ---------------------------------------------- Post header (from posts.js) */
+#post .post-header {
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #21262d;
+}
+#post .post-header h1 { margin-top: 4px; line-height: 1.25; }
+#post .subtitle {
+  margin-top: 8px;
+  font-size: 18px;
+  line-height: 1.6;
+  color: #8b949e;
+}
+#post .post-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}
+#post .back-link {
+  display: inline-block;
+  color: #58a6ff;
+  text-decoration: none;
+  font-size: 12px;
+}
+#post .back-link:hover { text-decoration: underline; }
+
+/* ---------------------------------------------- Home page */
+#home {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 32px var(--content-gutter) 48px;
+  font-size: 15px;
+  color: #e6edf3;
+  line-height: 2;
+}
+#home h1 { font-size: 32px; color: #f0f6fc; }
+#home .tagline { color: #8b949e; margin-bottom: 24px; }
+
+#home .search-label {
+  display: block;
+  font-size: 12px;
+  color: #8b949e;
+  margin-bottom: 6px;
+}
+#home .search {
+  width: 100%;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #e6edf3;
+  font-family: monospace;
+  font-size: 14px;
+}
+#home .search:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+#home .search::placeholder { color: #6e7681; }
+
+#home .tag-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 8px;
+}
+#home .result-count { font-size: 12px; color: #6e7681; margin-bottom: 16px; }
+
+#home .post-list { display: flex; flex-direction: column; gap: 12px; }
+#home .post-card {
+  display: block;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 16px 18px;
+  text-decoration: none;
+  color: inherit;
+}
+#home .post-card:hover { border-color: #58a6ff; }
+#home .post-card h2 { font-size: 18px; color: #f0f6fc; line-height: 1.4; }
+#home .post-card p { color: #8b949e; font-size: 13px; line-height: 1.7; margin: 6px 0 10px; }
+#home .card-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+#home .empty { color: #6e7681; font-size: 13px; }

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Visualizations</title>
+<link rel="stylesheet" href="assets/blog.css">
+</head>
+<body>
+<main id="home">
+  <h1>AI Visualizations</h1>
+  <p class="tagline">Interactive explanations of how machine learning models actually work.</p>
+
+  <label class="search-label" for="search">Search posts</label>
+  <input type="search" id="search" class="search" placeholder="e.g. attention, tokenization, adam" autocomplete="off">
+
+  <div id="tag-bar" class="tag-bar"></div>
+  <p id="result-count" class="result-count"></p>
+
+  <div id="post-list" class="post-list"></div>
+
+  <noscript>
+    <p class="empty">Post search and tag filtering need JavaScript. Browse the folders directly instead.</p>
+  </noscript>
+</main>
+
+<script defer src="assets/posts.js"></script>
+<script defer src="assets/home.js"></script>
+</body>
+</html>
