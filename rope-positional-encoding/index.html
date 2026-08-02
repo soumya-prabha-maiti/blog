@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RoPE - Rotary Position Embedding Visualization</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('explanation'));"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; }
+#explanation { padding: 16px 24px 12px; }
+#explanation h1 { font-size: 18px; margin-bottom: 6px; color: #f0f6fc; }
+#explanation p { font-size: 12px; color: #8b949e; line-height: 2; }
+#controls {
+  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  border: 1px solid #30363d; border-radius: 10px; margin: 8px 24px;
+}
+#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+#controls input[type=range] { width: 100px; }
+#controls span { min-width: 30px; text-align: right; }
+#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
+#controls button:hover { background: #2ea043; }
+#view-tabs { padding: 8px 24px; display: flex; gap: 8px; }
+#view-tabs button { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-family: monospace; font-size: 12px; }
+#view-tabs button.active { background: #238636; color: #fff; border-color: #238636; }
+canvas { display: block; margin: 8px 24px; border-radius: 8px; background: #0d1117; }
+#info { padding: 8px 24px; font-size: 11px; color: #8b949e; }
+</style>
+</head>
+<body>
+<div id="explanation">
+  <h1>RoPE - Rotary Position Embedding</h1>
+  <p>
+    Unlike sinusoidal PE (added at input), RoPE is applied <strong>inside every attention layer</strong> by rotating query and key vectors.
+    <br><br>
+    For each pair of dimensions \((2i, 2i+1)\), the query/key vector is rotated by angle \(\theta_i \cdot pos\):
+    <br><br>
+    \[\begin{pmatrix} q'_{2i} \\ q'_{2i+1} \end{pmatrix} = \begin{pmatrix} \cos(pos \cdot \theta_i) & -\sin(pos \cdot \theta_i) \\ \sin(pos \cdot \theta_i) & \cos(pos \cdot \theta_i) \end{pmatrix} \begin{pmatrix} q_{2i} \\ q_{2i+1} \end{pmatrix}\]
+    <br>
+    where \(\theta_i = \frac{1}{10000^{2i/d}}\). The dot product \(q' \cdot k'\) then depends only on relative position \((pos_q - pos_k)\).
+    <br><br>
+    <strong>View 1 - Rotation:</strong> Shows how a 2D vector (one dimension pair) gets rotated as position increases. Each pair rotates at a different speed.
+    <br>
+    <strong>View 2 - Dot Product Decay:</strong> Shows how \(q'(m) \cdot k'(n)\) varies with relative distance \(|m - n|\), demonstrating the relative position property.
+    <br>
+    <strong>View 3 - Before vs After:</strong> Shows the Q/K vectors before and after RoPE rotation side by side.
+  </p>
+</div>
+
+<div id="controls">
+  <label>d_model: <input type="range" id="sl-d" min="8" max="128" step="8" value="32"><span id="v-d">32</span></label>
+  <label>pos_q: <input type="range" id="sl-posq" min="0" max="127" value="5"><span id="v-posq">5</span></label>
+  <label>pos_k: <input type="range" id="sl-posk" min="0" max="127" value="20"><span id="v-posk">20</span></label>
+  <label>Num pairs shown: <input type="range" id="sl-pairs" min="1" max="16" value="6"><span id="v-pairs">6</span></label>
+  <button id="btn-animate">▶ Animate pos_q</button>
+</div>
+
+<div id="view-tabs">
+  <button class="active" data-view="rotation">Rotation per Pair</button>
+  <button data-view="dotproduct">Dot Product Decay</button>
+  <button data-view="beforeafter">Before vs After</button>
+</div>
+
+<canvas id="c" width="900" height="500"></canvas>
+<div id="info"></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const info = document.getElementById('info');
+
+let dModel = 32, posQ = 5, posK = 20, numPairs = 6;
+let currentView = 'rotation';
+let animating = false, animId = null;
+
+// Fixed random Q and K vectors (seeded for reproducibility)
+let qVec = [], kVec = [];
+function seedVectors() {
+  qVec = []; kVec = [];
+  // Simple deterministic pseudo-random
+  let s = 42;
+  function rand() { s = (s * 1664525 + 1013904223) & 0xFFFFFFFF; return (s >>> 0) / 0xFFFFFFFF - 0.5; }
+  for (let i = 0; i < 128; i++) { qVec.push(rand() * 2); kVec.push(rand() * 2); }
+}
+seedVectors();
+
+function theta(i, d) {
+  return 1.0 / Math.pow(10000, (2 * i) / d);
+}
+
+function ropeRotate(vec, pos, d) {
+  const out = vec.slice(0, d);
+  for (let i = 0; i < d / 2; i++) {
+    const angle = pos * theta(i, d);
+    const cos_a = Math.cos(angle), sin_a = Math.sin(angle);
+    const x = vec[2 * i], y = vec[2 * i + 1];
+    out[2 * i] = x * cos_a - y * sin_a;
+    out[2 * i + 1] = x * sin_a + y * cos_a;
+  }
+  return out;
+}
+
+function dot(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  return s;
+}
+
+function drawRotationView() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const cols = Math.min(numPairs, 8);
+  const rows = Math.ceil(numPairs / cols);
+  const cellW = W / cols;
+  const cellH = H / rows;
+  const radius = Math.min(cellW, cellH) * 0.35;
+
+  for (let p = 0; p < numPairs; p++) {
+    const col = p % cols, row = Math.floor(p / cols);
+    const cx = col * cellW + cellW / 2;
+    const cy = row * cellH + cellH / 2;
+
+    const angleQ = posQ * theta(p, dModel);
+    const angleK = posK * theta(p, dModel);
+
+    // Original Q vector (pair p)
+    const oqx = qVec[2 * p], oqy = qVec[2 * p + 1];
+    const okx = kVec[2 * p], oky = kVec[2 * p + 1];
+
+    // Rotated
+    const rqx = oqx * Math.cos(angleQ) - oqy * Math.sin(angleQ);
+    const rqy = oqx * Math.sin(angleQ) + oqy * Math.cos(angleQ);
+    const rkx = okx * Math.cos(angleK) - oky * Math.sin(angleK);
+    const rky = okx * Math.sin(angleK) + oky * Math.cos(angleK);
+
+    // Normalize for display
+    const scale = radius / Math.max(Math.hypot(rqx, rqy), Math.hypot(rkx, rky), 1);
+
+    // Circle
+    ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // Axes
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - radius, cy); ctx.lineTo(cx + radius, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy - radius); ctx.lineTo(cx, cy + radius); ctx.stroke();
+
+    // Draw original Q (faint)
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + oqx * scale, cy - oqy * scale);
+    ctx.strokeStyle = 'rgba(88,166,255,0.25)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+
+    // Draw rotated Q
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + rqx * scale, cy - rqy * scale);
+    ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx + rqx * scale, cy - rqy * scale, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#58a6ff'; ctx.fill();
+
+    // Draw original K (faint)
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + okx * scale, cy - oky * scale);
+    ctx.strokeStyle = 'rgba(240,136,62,0.25)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+
+    // Draw rotated K
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + rkx * scale, cy - rky * scale);
+    ctx.strokeStyle = '#f0883e'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx + rkx * scale, cy - rky * scale, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#f0883e'; ctx.fill();
+
+    // Rotation arc for Q
+    const origAngleQ = Math.atan2(oqy, oqx);
+    const rotAngleQ = Math.atan2(rqy, rqx);
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * 0.3, -rotAngleQ, -origAngleQ, rqy > oqy);
+    ctx.strokeStyle = 'rgba(88,166,255,0.4)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // Label
+    ctx.fillStyle = '#aaa'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(`pair ${p}`, cx, cy - radius - 10);
+    ctx.fillStyle = '#666'; ctx.font = '9px monospace';
+    ctx.fillText(`θ=${theta(p, dModel).toFixed(5)}`, cx, cy - radius - 0);
+    ctx.fillText(`λ=${(2 * Math.PI / theta(p, dModel)).toFixed(0)}`, cx, cy + radius + 12);
+
+    // Angle labels
+    ctx.fillStyle = '#58a6ff'; ctx.font = '9px monospace';
+    ctx.fillText(`q: ${(angleQ % (2*Math.PI)).toFixed(2)} rad`, cx, cy + radius + 24);
+    ctx.fillStyle = '#f0883e';
+    ctx.fillText(`k: ${(angleK % (2*Math.PI)).toFixed(2)} rad`, cx, cy + radius + 35);
+  }
+
+  // Legend
+  ctx.fillStyle = '#58a6ff'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
+  ctx.fillText(`■ Q (pos=${posQ})`, 10, H - 30);
+  ctx.fillStyle = '#f0883e';
+  ctx.fillText(`■ K (pos=${posK})`, 10, H - 16);
+  ctx.fillStyle = '#666';
+  ctx.fillText('dashed = original, solid = after RoPE rotation', 200, H - 22);
+}
+
+function drawDotProductView() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const maxDist = 64;
+  const padL = 60, padR = 20, padT = 40, padB = 50;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  // Compute dot products at various relative distances
+  const dots = [];
+  let minD = Infinity, maxD = -Infinity;
+  for (let delta = 0; delta <= maxDist; delta++) {
+    const qRot = ropeRotate(qVec, 0, dModel);
+    const kRot = ropeRotate(kVec, delta, dModel);
+    const d = dot(qRot, kRot);
+    dots.push(d);
+    if (d < minD) minD = d;
+    if (d > maxD) maxD = d;
+  }
+
+  const range = Math.max(maxD - minD, 1);
+  minD -= range * 0.1; maxD += range * 0.1;
+
+  // Axes
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + plotH); ctx.lineTo(padL + plotW, padT + plotH); ctx.stroke();
+
+  // Zero line
+  const zeroY = padT + plotH * (maxD / (maxD - minD));
+  if (zeroY > padT && zeroY < padT + plotH) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(padL, zeroY); ctx.lineTo(padL + plotW, zeroY); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Plot curve
+  ctx.beginPath();
+  for (let i = 0; i <= maxDist; i++) {
+    const x = padL + (i / maxDist) * plotW;
+    const y = padT + ((maxD - dots[i]) / (maxD - minD)) * plotH;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2; ctx.stroke();
+
+  // Highlight current relative distance
+  const curDelta = Math.abs(posQ - posK);
+  if (curDelta <= maxDist) {
+    const x = padL + (curDelta / maxDist) * plotW;
+    const y = padT + ((maxD - dots[curDelta]) / (maxD - minD)) * plotH;
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#f0883e'; ctx.fill();
+    ctx.strokeStyle = 'rgba(240,136,62,0.4)'; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#f0883e'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(`|${posQ}-${posK}| = ${curDelta}`, x, padT - 8);
+    ctx.fillText(`dot = ${dots[curDelta].toFixed(3)}`, x, y - 12);
+  }
+
+  // Axis labels
+  ctx.fillStyle = '#8b949e'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Relative distance |pos_q - pos_k|', padL + plotW / 2, H - 10);
+  ctx.save(); ctx.translate(14, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
+  ctx.fillText('q\'·k\' (dot product)', 0, 0); ctx.restore();
+
+  // X ticks
+  ctx.textAlign = 'center'; ctx.fillStyle = '#666'; ctx.font = '9px monospace';
+  for (let i = 0; i <= maxDist; i += 8) {
+    const x = padL + (i / maxDist) * plotW;
+    ctx.fillText(i, x, padT + plotH + 14);
+  }
+
+  // Title
+  ctx.fillStyle = '#e6edf3'; ctx.font = '12px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('Dot product depends only on RELATIVE position (not absolute)', padL, 20);
+  ctx.fillStyle = '#666'; ctx.font = '10px monospace';
+  ctx.fillText('(q fixed at pos=0, k swept from pos=0 to 64)', padL, 34);
+}
+
+function drawBeforeAfterView() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const barH = 14, gap = 3, padL = 100, padR = 20, padT = 50;
+  const barW = (W - padL - padR);
+  const dims = Math.min(dModel, 32); // show up to 32 dims
+
+  // Find max value for normalization
+  const qRot = ropeRotate(qVec, posQ, dModel);
+  const kRot = ropeRotate(kVec, posK, dModel);
+  let maxVal = 0;
+  for (let i = 0; i < dims; i++) {
+    maxVal = Math.max(maxVal, Math.abs(qVec[i]), Math.abs(qRot[i]), Math.abs(kVec[i]), Math.abs(kRot[i]));
+  }
+
+  const sectionH = dims * (barH + gap) + 30;
+
+  // Draw section: Q before and after
+  function drawSection(vec, rotVec, label, color, startY) {
+    ctx.fillStyle = color; ctx.font = '11px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(label, 10, startY - 8);
+
+    for (let i = 0; i < dims; i++) {
+      const y = startY + i * (barH + gap);
+      const origVal = vec[i];
+      const rotVal = rotVec[i];
+
+      // Background
+      ctx.fillStyle = 'rgba(255,255,255,0.03)';
+      ctx.fillRect(padL, y, barW, barH);
+
+      // Center line
+      const cx = padL + barW / 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(cx, y); ctx.lineTo(cx, y + barH); ctx.stroke();
+
+      // Original (faint)
+      const origW = (origVal / maxVal) * (barW / 2);
+      ctx.fillStyle = color.replace(')', ',0.2)').replace('rgb', 'rgba');
+      ctx.fillRect(cx, y, origW, barH / 2);
+
+      // Rotated (solid)
+      const rotW = (rotVal / maxVal) * (barW / 2);
+      ctx.fillStyle = color.replace(')', ',0.8)').replace('rgb', 'rgba');
+      ctx.fillRect(cx, y + barH / 2, rotW, barH / 2);
+
+      // Dim label
+      ctx.fillStyle = '#555'; ctx.font = '8px monospace'; ctx.textAlign = 'right';
+      ctx.fillText(`d${i}`, padL - 4, y + barH - 2);
+    }
+  }
+
+  canvas.height = padT + sectionH * 2 + 40;
+  ctx.clearRect(0, 0, W, canvas.height);
+
+  // Title
+  ctx.fillStyle = '#e6edf3'; ctx.font = '12px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('Before (faint, top half) vs After RoPE rotation (solid, bottom half of each bar)', padL, 20);
+  ctx.fillStyle = '#666'; ctx.font = '10px monospace';
+  ctx.fillText('Each bar shows one dimension. Pairs (0,1), (2,3), etc. share rotation frequency.', padL, 35);
+
+  drawSection(qVec, qRot, `Q (pos=${posQ})`, 'rgb(88,166,255)', padT);
+  drawSection(kVec, kRot, `K (pos=${posK})`, 'rgb(240,136,62)', padT + sectionH);
+
+  // Legend
+  const ly = padT + sectionH * 2 + 10;
+  ctx.fillStyle = '#8b949e'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('Top half = original vector | Bottom half = after RoPE rotation | Center = 0', padL, ly);
+}
+
+function draw() {
+  canvas.height = 500; // reset
+  if (currentView === 'rotation') drawRotationView();
+  else if (currentView === 'dotproduct') drawDotProductView();
+  else if (currentView === 'beforeafter') drawBeforeAfterView();
+}
+
+// Controls
+function readControls() {
+  dModel = +document.getElementById('sl-d').value;
+  posQ = +document.getElementById('sl-posq').value;
+  posK = +document.getElementById('sl-posk').value;
+  numPairs = +document.getElementById('sl-pairs').value;
+  document.getElementById('v-d').textContent = dModel;
+  document.getElementById('v-posq').textContent = posQ;
+  document.getElementById('v-posk').textContent = posK;
+  document.getElementById('v-pairs').textContent = numPairs;
+  document.getElementById('sl-pairs').max = dModel / 2;
+  info.textContent = `Relative distance: |pos_q - pos_k| = ${Math.abs(posQ - posK)} | θ₀ = ${theta(0, dModel).toFixed(6)} (fastest) | θ_${dModel/2-1} = ${theta(dModel/2-1, dModel).toExponential(3)} (slowest)`;
+  draw();
+}
+
+document.querySelectorAll('#controls input').forEach(el => el.addEventListener('input', readControls));
+
+// View tabs
+document.querySelectorAll('#view-tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#view-tabs button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentView = btn.dataset.view;
+    draw();
+  });
+});
+
+// Animate
+document.getElementById('btn-animate').addEventListener('click', function() {
+  if (animating) {
+    animating = false;
+    this.textContent = '▶ Animate pos_q';
+    cancelAnimationFrame(animId);
+  } else {
+    animating = true;
+    this.textContent = '⏸ Stop';
+    let last = 0;
+    function step(t) {
+      if (!animating) return;
+      if (t - last > 150) {
+        last = t;
+        posQ = (posQ + 1) % 128;
+        document.getElementById('sl-posq').value = posQ;
+        readControls();
+      }
+      animId = requestAnimationFrame(step);
+    }
+    animId = requestAnimationFrame(step);
+  }
+});
+
+// Responsive
+window.addEventListener('resize', () => { canvas.width = Math.min(900, window.innerWidth - 48); draw(); });
+canvas.width = Math.min(900, window.innerWidth - 48);
+readControls();
+</script>
+</body>
+</html>

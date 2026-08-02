@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Gradient Descent Optimizer Comparison</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('formulas-section'),{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; padding-bottom: 40px; }
+#header { padding: 16px 24px 12px; }
+#header h1 { font-size: 18px; margin-bottom: 6px; color: #f0f6fc; }
+#header p { font-size: 12px; color: #8b949e; line-height: 1.5; max-width: 900px; }
+#controls {
+  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  border: 1px solid #30363d; border-radius: 10px; margin: 8px 24px;
+}
+#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+#controls select, #controls input[type=number] { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+#controls input[type=number] { width: 70px; }
+#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
+#controls button:hover { background: #2ea043; }
+#controls button.reset { background: #da3633; }
+#controls button.reset:hover { background: #f85149; }
+.section { margin: 12px 24px; }
+.section-title { font-size: 13px; color: #8b949e; margin-bottom: 8px; }
+canvas { background: #161b22; border: 1px solid #30363d; border-radius: 10px; display: block; }
+.canvas-wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+#legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 24px; font-size: 12px; }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+#stats { background: #161b22; border: 1px solid #30363d; border-radius: 10px; margin: 12px 24px; padding: 12px 18px; font-size: 11px; overflow-x: auto; }
+#stats table { border-collapse: collapse; width: 100%; }
+#stats th, #stats td { padding: 6px 12px; border: 1px solid #30363d; text-align: center; }
+#stats th { background: #0d1117; color: #8b949e; }
+.info { text-align: center; margin-top: 8px; font-size: 11px; color: #8b949e; }
+#formulas { display: flex; gap: 16px; overflow-x: auto; padding: 12px 24px; scroll-snap-type: x mandatory; }
+#formulas::-webkit-scrollbar { height: 6px; }
+#formulas::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+.formula-card { flex: 0 0 auto; background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 18px 24px; scroll-snap-align: start; }
+.formula-card h3 { font-size: 15px; margin-bottom: 12px; }
+.formula-card .katex { font-size: 1.4em; }
+.formula-card p { font-size: 11px; color: #8b949e; margin-top: 6px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>Gradient Descent Optimizer Comparison</h1>
+  <p>Visualize how different optimizers navigate loss surfaces. Each dot represents an optimizer's position as it descends toward the minimum. Compare convergence speed, oscillation, and path efficiency across popular optimization algorithms.</p>
+</div>
+<div id="controls">
+  <label>Surface: <select id="surfaceSelect">
+    <option value="beale">Beale</option>
+    <option value="rosenbrock">Rosenbrock</option>
+    <option value="himmelblau">Himmelblau</option>
+    <option value="saddle">Saddle Point</option>
+    <option value="rastrigin">Rastrigin</option>
+  </select></label>
+  <label>LR: <input type="number" id="lrInput" value="0.001" step="0.0005" min="0.0001" max="0.1"></label>
+  <label>Steps: <input type="number" id="stepsInput" value="500" step="50" min="50" max="5000"></label>
+  <label>Speed: <input type="range" id="speedSlider" min="1" max="100" value="20" style="width:100px"><span id="speedVal">20</span> iter/frame</label>
+  <button id="runBtn">▶ Run</button>
+  <button id="stepBtn">⏭ Step</button>
+  <button class="reset" id="resetBtn">↺ Reset</button>
+</div>
+<div id="legend"></div>
+<div class="section">
+  <div class="canvas-wrap">
+    <div><canvas id="contourCanvas" width="560" height="560"></canvas><div class="info">Contour plot · optimizer paths overlaid</div></div>
+    <div><canvas id="lossCanvas" width="480" height="560"></canvas><div class="info">Loss vs. iteration</div></div>
+  </div>
+</div>
+<div id="stats"></div>
+
+<div id="formulas-section">
+<div class="section"><div class="section-title">Optimizer Update Rules (scroll →)</div></div>
+<div id="formulas">
+  <div class="formula-card"><h3 style="color:#58a6ff">SGD</h3><p>$$\theta_{t+1} = \theta_t - \eta \, g_t$$</p></div>
+  <div class="formula-card"><h3 style="color:#f0883e">Momentum</h3><p>$$v_t = \beta v_{t-1} + g_t$$ $$\theta_{t+1} = \theta_t - \eta \, v_t$$</p></div>
+  <div class="formula-card"><h3 style="color:#d2a8ff">NAG</h3><p>$$v_t = \beta v_{t-1} + g_t$$ $$\theta_{t+1} = \theta_t - \eta(g_t + \beta v_t)$$</p></div>
+  <div class="formula-card"><h3 style="color:#7ee787">Adagrad</h3><p>$$G_t = G_{t-1} + g_t^2$$ $$\theta_{t+1} = \theta_t - \frac{\eta}{\sqrt{G_t + \epsilon}} \, g_t$$</p></div>
+  <div class="formula-card"><h3 style="color:#ff7b72">RMSProp</h3><p>$$v_t = \beta v_{t-1} + (1-\beta) g_t^2$$ $$\theta_{t+1} = \theta_t - \frac{\eta}{\sqrt{v_t + \epsilon}} \, g_t$$</p></div>
+  <div class="formula-card"><h3 style="color:#ffd700">Adam</h3><p>$$m_t = \beta_1 m_{t-1} + (1-\beta_1) g_t$$ $$v_t = \beta_2 v_{t-1} + (1-\beta_2) g_t^2$$ $$\hat{m}_t = \frac{m_t}{1-\beta_1^t}, \quad \hat{v}_t = \frac{v_t}{1-\beta_2^t}$$ $$\theta_{t+1} = \theta_t - \frac{\eta \, \hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}$$</p></div>
+  <div class="formula-card"><h3 style="color:#79c0ff">AdamW</h3><p>$$\hat{m}_t, \hat{v}_t \text{ as in Adam}$$ $$\theta_{t+1} = \theta_t - \eta\!\left(\frac{\hat{m}_t}{\sqrt{\hat{v}_t}+\epsilon} + \lambda\theta_t\right)$$</p></div>
+  <div class="formula-card"><h3 style="color:#f778ba">Nadam</h3><p>$$\hat{m}_t, \hat{v}_t \text{ as in Adam}$$ $$\bar{m}_t = \beta_1 \hat{m}_t + \frac{(1-\beta_1) g_t}{1-\beta_1^t}$$ $$\theta_{t+1} = \theta_t - \frac{\eta \, \bar{m}_t}{\sqrt{\hat{v}_t}+\epsilon}$$</p></div>
+</div>
+<div class="section" style="margin-top:8px;">
+  <div class="section-title">Notation</div>
+  <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px 20px;font-size:12px;line-height:2;color:#e6edf3;">
+    $\theta_t$ - parameters at step $t$ &emsp;
+    $g_t = \nabla_\theta L(\theta_t)$ - gradient of loss w.r.t. parameters &emsp;
+    $\eta$ - learning rate &emsp;
+    $\beta, \beta_1, \beta_2$ - exponential decay rates (momentum coefficients) &emsp;
+    $v_t$ - exponential moving average of squared gradients &emsp;
+    $m_t$ - exponential moving average of gradients (first moment) &emsp;
+    $\hat{m}_t, \hat{v}_t$ - bias-corrected first/second moment estimates &emsp;
+    $G_t$ - sum of squared gradients (Adagrad accumulator) &emsp;
+    $\epsilon$ - small constant for numerical stability (e.g. $10^{-8}$) &emsp;
+    $\lambda$ - weight decay coefficient
+  </div>
+</div>
+</div>
+
+<script>
+const optimizers = [
+  { name: 'SGD', color: '#58a6ff' },
+  { name: 'Momentum', color: '#f0883e' },
+  { name: 'NAG', color: '#d2a8ff' },
+  { name: 'Adagrad', color: '#7ee787' },
+  { name: 'RMSProp', color: '#ff7b72' },
+  { name: 'Adam', color: '#ffd700' },
+  { name: 'AdamW', color: '#79c0ff' },
+  { name: 'Nadam', color: '#f778ba' },
+];
+
+const surfaces = {
+  beale: {
+    fn: (x, y) => Math.pow(1.5 - x + x*y, 2) + Math.pow(2.25 - x + x*y*y, 2) + Math.pow(2.625 - x + x*y*y*y, 2),
+    grad: (x, y) => {
+      const a = 1.5 - x + x*y, b = 2.25 - x + x*y*y, c = 2.625 - x + x*y*y*y;
+      return [2*a*(-1+y) + 2*b*(-1+y*y) + 2*c*(-1+y*y*y), 2*a*x + 2*b*2*x*y + 2*c*3*x*y*y];
+    },
+    bounds: [-4.5, 4.5, -4.5, 4.5], start: [-3, 3], min: [3, 0.5]
+  },
+  rosenbrock: {
+    fn: (x, y) => Math.pow(1-x, 2) + 100*Math.pow(y - x*x, 2),
+    grad: (x, y) => [-2*(1-x) - 400*x*(y - x*x), 200*(y - x*x)],
+    bounds: [-2, 2, -1, 3], start: [-1.5, 2.5], min: [1, 1]
+  },
+  himmelblau: {
+    fn: (x, y) => Math.pow(x*x + y - 11, 2) + Math.pow(x + y*y - 7, 2),
+    grad: (x, y) => [4*x*(x*x+y-11) + 2*(x+y*y-7), 2*(x*x+y-11) + 4*y*(x+y*y-7)],
+    bounds: [-5, 5, -5, 5], start: [-4, 4], min: [3, 2]
+  },
+  saddle: {
+    fn: (x, y) => x*x - y*y,
+    grad: (x, y) => [2*x, -2*y],
+    bounds: [-3, 3, -3, 3], start: [0.5, 0.01], min: [0, 0]
+  },
+  rastrigin: {
+    fn: (x, y) => 20 + x*x - 10*Math.cos(2*Math.PI*x) + y*y - 10*Math.cos(2*Math.PI*y),
+    grad: (x, y) => [2*x + 20*Math.PI*Math.sin(2*Math.PI*x), 2*y + 20*Math.PI*Math.sin(2*Math.PI*y)],
+    bounds: [-5.12, 5.12, -5.12, 5.12], start: [4, 4], min: [0, 0]
+  }
+};
+
+class Optimizer {
+  constructor(name, lr, x0, y0) {
+    this.name = name; this.lr = lr;
+    this.x = x0; this.y = y0;
+    this.vx = 0; this.vy = 0;
+    this.mx = 0; this.my = 0;
+    this.sx = 1e-8; this.sy = 1e-8;
+    this.t = 0;
+    this.beta1 = 0.9; this.beta2 = 0.999; this.eps = 1e-8;
+    this.wd = 0.01;
+    this.path = [[x0, y0]];
+    this.losses = [];
+  }
+  step(grad) {
+    this.t++;
+    const [gx, gy] = grad(this.x, this.y);
+    const lr = this.lr;
+    switch(this.name) {
+      case 'SGD':
+        this.x -= lr * gx; this.y -= lr * gy; break;
+      case 'Momentum':
+        this.vx = 0.9*this.vx + gx; this.vy = 0.9*this.vy + gy;
+        this.x -= lr*this.vx; this.y -= lr*this.vy; break;
+      case 'NAG':
+        this.vx = 0.9*this.vx + gx; this.vy = 0.9*this.vy + gy;
+        this.x -= lr*(gx + 0.9*this.vx); this.y -= lr*(gy + 0.9*this.vy); break;
+      case 'Adagrad':
+        this.sx += gx*gx; this.sy += gy*gy;
+        this.x -= lr*gx/Math.sqrt(this.sx+this.eps); this.y -= lr*gy/Math.sqrt(this.sy+this.eps); break;
+      case 'RMSProp':
+        this.sx = 0.9*this.sx + 0.1*gx*gx; this.sy = 0.9*this.sy + 0.1*gy*gy;
+        this.x -= lr*gx/Math.sqrt(this.sx+this.eps); this.y -= lr*gy/Math.sqrt(this.sy+this.eps); break;
+      case 'Adam': {
+        this.mx = this.beta1*this.mx + (1-this.beta1)*gx; this.my = this.beta1*this.my + (1-this.beta1)*gy;
+        this.sx = this.beta2*this.sx + (1-this.beta2)*gx*gx; this.sy = this.beta2*this.sy + (1-this.beta2)*gy*gy;
+        const mxh = this.mx/(1-Math.pow(this.beta1,this.t)), myh = this.my/(1-Math.pow(this.beta1,this.t));
+        const sxh = this.sx/(1-Math.pow(this.beta2,this.t)), syh = this.sy/(1-Math.pow(this.beta2,this.t));
+        this.x -= lr*mxh/(Math.sqrt(sxh)+this.eps); this.y -= lr*myh/(Math.sqrt(syh)+this.eps); break;
+      }
+      case 'AdamW': {
+        this.mx = this.beta1*this.mx + (1-this.beta1)*gx; this.my = this.beta1*this.my + (1-this.beta1)*gy;
+        this.sx = this.beta2*this.sx + (1-this.beta2)*gx*gx; this.sy = this.beta2*this.sy + (1-this.beta2)*gy*gy;
+        const mxh = this.mx/(1-Math.pow(this.beta1,this.t)), myh = this.my/(1-Math.pow(this.beta1,this.t));
+        const sxh = this.sx/(1-Math.pow(this.beta2,this.t)), syh = this.sy/(1-Math.pow(this.beta2,this.t));
+        this.x -= lr*(mxh/(Math.sqrt(sxh)+this.eps) + this.wd*this.x);
+        this.y -= lr*(myh/(Math.sqrt(syh)+this.eps) + this.wd*this.y); break;
+      }
+      case 'Nadam': {
+        this.mx = this.beta1*this.mx + (1-this.beta1)*gx; this.my = this.beta1*this.my + (1-this.beta1)*gy;
+        this.sx = this.beta2*this.sx + (1-this.beta2)*gx*gx; this.sy = this.beta2*this.sy + (1-this.beta2)*gy*gy;
+        const mxh = this.mx/(1-Math.pow(this.beta1,this.t)), myh = this.my/(1-Math.pow(this.beta1,this.t));
+        const sxh = this.sx/(1-Math.pow(this.beta2,this.t)), syh = this.sy/(1-Math.pow(this.beta2,this.t));
+        const nxh = (this.beta1*mxh + (1-this.beta1)*gx/(1-Math.pow(this.beta1,this.t)));
+        const nyh = (this.beta1*myh + (1-this.beta1)*gy/(1-Math.pow(this.beta1,this.t)));
+        this.x -= lr*nxh/(Math.sqrt(sxh)+this.eps); this.y -= lr*nyh/(Math.sqrt(syh)+this.eps); break;
+      }
+    }
+    this.path.push([this.x, this.y]);
+  }
+}
+
+let opts = [], animFrame = null, currentStep = 0, maxSteps = 500, running = false;
+
+function getSurface() { return surfaces[document.getElementById('surfaceSelect').value]; }
+function getLR() { return parseFloat(document.getElementById('lrInput').value); }
+function getMaxSteps() { return parseInt(document.getElementById('stepsInput').value); }
+
+function initOptimizers() {
+  const s = getSurface(), lr = getLR();
+  opts = optimizers.map(o => new Optimizer(o.name, lr, s.start[0], s.start[1]));
+  opts.forEach(o => o.losses.push(s.fn(o.x, o.y)));
+  currentStep = 0; maxSteps = getMaxSteps();
+}
+
+function drawContour() {
+  const canvas = document.getElementById('contourCanvas');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const s = getSurface();
+  const [xmin, xmax, ymin, ymax] = s.bounds;
+  const img = ctx.createImageData(w, h);
+  const vals = [];
+  for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) {
+    const x = xmin + (px/w)*(xmax-xmin), y = ymin + (py/h)*(ymax-ymin);
+    vals.push(s.fn(x, y));
+  }
+  const vmin = Math.min(...vals), vmax = Math.max(...vals);
+  const logMin = Math.log(vmin - Math.min(vmin, 0) + 1), logMax = Math.log(vmax - Math.min(vmin, 0) + 1);
+  for (let i = 0; i < vals.length; i++) {
+    const t = (Math.log(vals[i] - Math.min(vmin, 0) + 1) - logMin) / (logMax - logMin || 1);
+    const r = Math.round(10 + t * 30), g = Math.round(15 + t * 40), b = Math.round(30 + t * 80);
+    img.data[i*4] = r; img.data[i*4+1] = g; img.data[i*4+2] = b; img.data[i*4+3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  // contour lines
+  const levels = 20;
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 0.5;
+  for (let l = 1; l < levels; l++) {
+    const threshold = vmin + (vmax - vmin) * l / levels;
+    for (let py = 1; py < h-1; py++) for (let px = 1; px < w-1; px++) {
+      const idx = py*w+px;
+      if ((vals[idx] < threshold) !== (vals[idx+1] < threshold) || (vals[idx] < threshold) !== (vals[idx+w] < threshold)) {
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.fillRect(px, py, 1, 1);
+      }
+    }
+  }
+  // mark minimum
+  const mx = ((s.min[0]-xmin)/(xmax-xmin))*w, my = ((s.min[1]-ymin)/(ymax-ymin))*h;
+  ctx.beginPath(); ctx.arc(mx, my, 6, 0, Math.PI*2);
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.beginPath(); ctx.arc(mx, my, 2, 0, Math.PI*2);
+  ctx.fillStyle = '#fff'; ctx.fill();
+}
+
+function toCanvas(x, y) {
+  const s = getSurface();
+  const [xmin, xmax, ymin, ymax] = s.bounds;
+  const canvas = document.getElementById('contourCanvas');
+  return [(x-xmin)/(xmax-xmin)*canvas.width, (y-ymin)/(ymax-ymin)*canvas.height];
+}
+
+function drawPaths() {
+  const ctx = document.getElementById('contourCanvas').getContext('2d');
+  drawContour();
+  opts.forEach((opt, oi) => {
+    const path = opt.path;
+    if (path.length < 2) return;
+    ctx.strokeStyle = optimizers[oi].color;
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath();
+    const [sx, sy] = toCanvas(path[0][0], path[0][1]);
+    ctx.moveTo(sx, sy);
+    for (let i = 1; i < path.length; i++) {
+      const [px, py] = toCanvas(path[i][0], path[i][1]);
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    // current position
+    const [cx, cy] = toCanvas(path[path.length-1][0], path[path.length-1][1]);
+    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2);
+    ctx.fillStyle = optimizers[oi].color; ctx.globalAlpha = 1; ctx.fill();
+  });
+}
+
+function drawLossChart() {
+  const canvas = document.getElementById('lossCanvas');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#161b22'; ctx.fillRect(0, 0, w, h);
+  const pad = { l: 60, r: 20, t: 30, b: 40 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  // find ranges
+  let maxLoss = 0, maxIter = 1;
+  opts.forEach(o => { o.losses.forEach(l => { if (isFinite(l) && l > maxLoss) maxLoss = l; }); if (o.losses.length > maxIter) maxIter = o.losses.length; });
+  maxLoss = Math.log(maxLoss + 1);
+  // axes
+  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, pad.t+ph); ctx.lineTo(pad.l+pw, pad.t+ph); ctx.stroke();
+  ctx.fillStyle = '#8b949e'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Iteration', pad.l + pw/2, h - 8);
+  ctx.save(); ctx.translate(14, pad.t + ph/2); ctx.rotate(-Math.PI/2); ctx.fillText('log(loss+1)', 0, 0); ctx.restore();
+  // ticks
+  for (let i = 0; i <= 5; i++) {
+    const x = pad.l + (i/5)*pw;
+    ctx.fillStyle = '#8b949e'; ctx.textAlign = 'center';
+    ctx.fillText(Math.round(i/5*(maxIter-1)), x, pad.t+ph+16);
+  }
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + ph - (i/4)*ph;
+    ctx.fillStyle = '#8b949e'; ctx.textAlign = 'right';
+    ctx.fillText((maxLoss*i/4).toFixed(1), pad.l-8, y+4);
+    ctx.strokeStyle = '#21262d'; ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l+pw, y); ctx.stroke();
+  }
+  // lines
+  opts.forEach((opt, oi) => {
+    ctx.strokeStyle = optimizers[oi].color; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    for (let i = 0; i < opt.losses.length; i++) {
+      const x = pad.l + (i/(maxIter-1||1))*pw;
+      const lv = isFinite(opt.losses[i]) ? Math.log(Math.abs(opt.losses[i])+1) : maxLoss;
+      const y = pad.t + ph - (lv/maxLoss)*ph;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  });
+}
+
+function drawStats() {
+  const s = getSurface();
+  let html = '<table><tr><th>Optimizer</th><th>Final Loss</th><th>Distance to Min</th><th>Steps</th></tr>';
+  opts.forEach((opt, i) => {
+    const loss = s.fn(opt.x, opt.y);
+    const dist = Math.sqrt(Math.pow(opt.x - s.min[0], 2) + Math.pow(opt.y - s.min[1], 2));
+    html += `<tr><td style="color:${optimizers[i].color}">${opt.name}</td><td>${loss.toExponential(3)}</td><td>${dist.toFixed(4)}</td><td>${opt.path.length-1}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('stats').innerHTML = html;
+}
+
+function doStep() {
+  const s = getSurface();
+  opts.forEach(o => {
+    o.step(s.grad);
+    o.losses.push(s.fn(o.x, o.y));
+  });
+  currentStep++;
+}
+
+function drawAll() { drawPaths(); drawLossChart(); drawStats(); }
+
+function runAnimation() {
+  if (!running || currentStep >= maxSteps) { running = false; document.getElementById('runBtn').textContent = '▶ Run'; return; }
+  const batchSize = parseInt(document.getElementById('speedSlider').value);
+  for (let i = 0; i < batchSize && currentStep < maxSteps; i++) doStep();
+  drawAll();
+  animFrame = requestAnimationFrame(runAnimation);
+}
+
+function reset() {
+  running = false; if (animFrame) cancelAnimationFrame(animFrame);
+  document.getElementById('runBtn').textContent = '▶ Run';
+  initOptimizers(); drawContour(); drawAll();
+}
+
+document.getElementById('runBtn').addEventListener('click', () => {
+  if (running) { running = false; document.getElementById('runBtn').textContent = '▶ Run'; return; }
+  if (currentStep >= maxSteps) reset();
+  running = true; document.getElementById('runBtn').textContent = '⏸ Pause'; runAnimation();
+});
+document.getElementById('stepBtn').addEventListener('click', () => { running = false; document.getElementById('runBtn').textContent = '▶ Run'; doStep(); drawAll(); });
+document.getElementById('resetBtn').addEventListener('click', reset);
+document.getElementById('surfaceSelect').addEventListener('change', reset);
+document.getElementById('speedSlider').addEventListener('input', e => { document.getElementById('speedVal').textContent = e.target.value; });
+
+// legend
+document.getElementById('legend').innerHTML = optimizers.map(o => `<div class="legend-item"><div class="legend-dot" style="background:${o.color}"></div>${o.name}</div>`).join('');
+
+// init
+initOptimizers(); drawContour(); drawAll();
+</script>
+</body>
+</html>

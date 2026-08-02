@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BPE Tokenization Visualizer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; padding-bottom: 40px; }
+#header { padding: 16px 24px 12px; }
+#header h1 { font-size: 18px; margin-bottom: 6px; color: #f0f6fc; }
+#header p { font-size: 12px; color: #8b949e; line-height: 1.8; max-width: 900px; }
+#controls {
+  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  border: 1px solid #30363d; border-radius: 10px; margin: 8px 24px;
+}
+#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+#controls select, #controls input[type=number] { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+#controls input[type=number] { width: 60px; }
+#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
+#controls button:hover { background: #2ea043; }
+#controls button.reset { background: #da3633; }
+#controls button.reset:hover { background: #f85149; }
+.section { margin: 12px 24px; }
+.section-title { font-size: 13px; color: #8b949e; margin-bottom: 8px; }
+.panel { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 14px 18px; }
+textarea, input[type=text] {
+  background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 8px 10px;
+  border-radius: 6px; font-family: monospace; font-size: 12px; width: 100%; resize: vertical;
+}
+textarea:focus, input[type=text]:focus { outline: 1px solid #238636; }
+.chip {
+  display: inline-flex; align-items: center; padding: 3px 7px; border-radius: 4px; margin: 2px;
+  font-size: 12px; border: 1px solid transparent; line-height: 1.4; white-space: pre;
+}
+.chip .eow { opacity: 0.45; font-size: 10px; margin-left: 1px; }
+.chip.just-merged { border-color: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,0.5); }
+.chip.pair-hl { border-color: #d29922; }
+.word-block { display: inline-flex; align-items: center; margin: 4px 10px 4px 0; padding: 3px 6px; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; }
+.word-freq { font-size: 10px; color: #8b949e; margin-left: 5px; }
+.rule-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; margin: 3px;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 4px; font-size: 11px;
+}
+.rule-chip .rule-idx { color: #8b949e; font-size: 10px; }
+.rule-chip.latest { border-color: #3fb950; }
+table.pairs { border-collapse: collapse; font-size: 11px; width: 100%; }
+table.pairs th, table.pairs td { padding: 5px 10px; border: 1px solid #30363d; text-align: center; }
+table.pairs th { background: #0d1117; color: #8b949e; }
+table.pairs tr.best td { background: rgba(35,134,54,0.25); color: #7ee787; font-weight: bold; }
+#status-bar { display: flex; gap: 24px; flex-wrap: wrap; font-size: 12px; margin: 8px 24px; color: #8b949e; }
+#status-bar b { color: #f0f6fc; }
+.stats { font-size: 11px; color: #8b949e; margin-top: 10px; line-height: 1.8; }
+.stats b { color: #7ee787; }
+.two-col { display: flex; gap: 16px; flex-wrap: wrap; }
+.two-col > div { flex: 1 1 380px; }
+#tok-slider-wrap { display: flex; align-items: center; gap: 10px; font-size: 12px; margin: 10px 0; color: #8b949e; }
+#tok-slider-wrap input[type=range] { width: 200px; }
+.msg { font-size: 11px; color: #d29922; margin-top: 6px; }
+.tok-id { font-size: 9px; opacity: 0.6; margin-left: 4px; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>BPE Tokenization Visualizer</h1>
+  <p>
+    Byte Pair Encoding learns a subword vocabulary from a corpus. Every word starts as a sequence of characters
+    (plus an end-of-word marker, shown as <span style="color:#e6edf3">·</span>). At each training step, the algorithm finds the
+    <strong style="color:#7ee787">most frequent adjacent symbol pair</strong> in the corpus and merges it into a single new token,
+    adding a merge rule to an ordered list. To tokenize new text, the learned rules are replayed in the same order.
+    Frequent words end up as single tokens; rare words break into subword pieces — no word is ever "unknown".
+  </p>
+</div>
+
+<div id="controls">
+  <label>Corpus: <select id="corpusSelect">
+    <option value="classic">Classic (low/lower/newest…)</option>
+    <option value="transformer">Transformer-ish</option>
+    <option value="code">Code-like</option>
+    <option value="custom">Custom (edit below)</option>
+  </select></label>
+  <label>Max merges: <input type="number" id="maxMerges" value="40" min="1" max="200"></label>
+  <label>Speed: <input type="range" id="speedSlider" min="1" max="10" value="4" style="width:90px"><span id="speedVal">4</span>/s</label>
+  <button id="stepBtn">⏭ Merge Step</button>
+  <button id="trainBtn">▶ Train All</button>
+  <button class="reset" id="resetBtn">↺ Reset</button>
+</div>
+
+<div id="status-bar">
+  <span>Merges learned: <b id="st-merges">0</b></span>
+  <span>Vocab size: <b id="st-vocab">0</b> (<span id="st-base">0</span> base + <span id="st-learned">0</span> merged)</span>
+  <span>Corpus tokens: <b id="st-corpus-tokens">0</b></span>
+  <span id="st-msg" style="color:#d29922"></span>
+</div>
+
+<div class="section">
+  <div class="section-title">Training Corpus (editable — resets training)</div>
+  <textarea id="corpusText" rows="3" spellcheck="false"></textarea>
+</div>
+
+<div class="section">
+  <div class="section-title">Corpus State — unique words as symbol sequences (× word frequency)</div>
+  <div class="panel" id="corpus-state"></div>
+</div>
+
+<div class="section two-col">
+  <div>
+    <div class="section-title">Pair Frequencies — next merge candidate highlighted</div>
+    <div class="panel" id="pair-table"></div>
+  </div>
+  <div>
+    <div class="section-title">Learned Merge Rules (ordered)</div>
+    <div class="panel" id="rules-list"><span style="color:#8b949e;font-size:11px">No merges yet — press ⏭ Merge Step or ▶ Train All</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Tokenize Your Own Text</div>
+  <div class="panel">
+    <input type="text" id="userText" spellcheck="false" value="the lowest transformer tokenizes newer words">
+    <div id="tok-slider-wrap">
+      <span>Merge rules applied:</span>
+      <input type="range" id="tokSlider" min="0" max="0" value="0">
+      <span id="tokSliderVal">0 / 0</span>
+      <span style="margin-left:12px">(drag to watch characters fuse into subwords)</span>
+    </div>
+    <div id="tok-output"></div>
+    <div class="stats" id="tok-stats"></div>
+  </div>
+</div>
+
+<script>
+// ------------------------------------------------------------------ corpora
+const EOW = '</w>';
+const corpora = {
+  classic: 'low low low low low lower lower newest newest newest newest newest newest widest widest widest new new new wide wide',
+  transformer: 'the transformer transforms tokens the tokenizer tokenizes the text attention attends to tokens the model models language learning learns the learned tokens',
+  code: 'get_user set_user get_item set_item get_user_name set_user_name update_user update_item delete_user delete_item'
+};
+
+// ------------------------------------------------------------------ state
+let words = [];        // [{ symbols: [...], freq }]
+let rules = [];        // [[a, b], ...]  ordered merge rules
+let baseVocab = [];    // base symbols
+let lastMerged = null; // token string created by latest merge
+let training = false, trainTimer = null;
+
+function buildWordFreqs(text) {
+  const freqs = new Map();
+  text.trim().split(/\s+/).filter(w => w.length).forEach(w => freqs.set(w, (freqs.get(w) || 0) + 1));
+  return [...freqs.entries()].map(([w, f]) => ({ symbols: [...w, EOW], freq: f }));
+}
+
+function countPairs() {
+  const counts = new Map();
+  for (const { symbols, freq } of words) {
+    for (let i = 0; i < symbols.length - 1; i++) {
+      const key = symbols[i] + '\u0000' + symbols[i + 1];
+      counts.set(key, (counts.get(key) || 0) + freq);
+    }
+  }
+  return [...counts.entries()]
+    .map(([k, c]) => { const [a, b] = k.split('\u0000'); return { a, b, count: c }; })
+    .sort((x, y) => y.count - x.count || (x.a + x.b).localeCompare(y.a + y.b));
+}
+
+function applyMerge(symbols, a, b) {
+  const out = [];
+  let i = 0;
+  while (i < symbols.length) {
+    if (i < symbols.length - 1 && symbols[i] === a && symbols[i + 1] === b) {
+      out.push(a + b); i += 2;
+    } else {
+      out.push(symbols[i]); i += 1;
+    }
+  }
+  return out;
+}
+
+function mergeStep() {
+  const pairs = countPairs();
+  const best = pairs.find(p => p.count >= 2);
+  if (!best) {
+    setMsg('No pair occurs more than once — training converged.');
+    stopTraining();
+    return false;
+  }
+  words = words.map(w => ({ symbols: applyMerge(w.symbols, best.a, best.b), freq: w.freq }));
+  rules.push([best.a, best.b]);
+  lastMerged = best.a + best.b;
+  setMsg('');
+  return true;
+}
+
+// ------------------------------------------------------------------ vocab & colors
+function computeBaseVocab() {
+  const set = new Set();
+  // base = individual chars of original words + EOW
+  document.getElementById('corpusText').value.trim().split(/\s+/).forEach(w => [...w].forEach(c => set.add(c)));
+  set.add(EOW);
+  baseVocab = [...set].sort();
+}
+
+function fullVocab() {
+  return [...baseVocab, ...rules.map(([a, b]) => a + b)];
+}
+
+function tokenId(tok) {
+  const v = fullVocab();
+  return v.indexOf(tok);
+}
+
+function tokenColor(tok) {
+  let h = 0;
+  for (let i = 0; i < tok.length; i++) h = (h * 31 + tok.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  return { bg: `hsl(${hue}, 45%, 22%)`, border: `hsl(${hue}, 55%, 38%)` };
+}
+
+function chipHTML(tok, extraClass = '', showId = false) {
+  const { bg, border } = tokenColor(tok);
+  const display = tok.replace(EOW, '<span class="eow">·</span>');
+  const idPart = showId ? `<span class="tok-id">${tokenId(tok) >= 0 ? tokenId(tok) : '?'}</span>` : '';
+  return `<span class="chip ${extraClass}" style="background:${bg};border-color:${extraClass ? '' : border}">${display}${idPart}</span>`;
+}
+
+// ------------------------------------------------------------------ rendering
+function setMsg(m) { document.getElementById('st-msg').textContent = m; }
+
+function renderStatus() {
+  document.getElementById('st-merges').textContent = rules.length;
+  document.getElementById('st-base').textContent = baseVocab.length;
+  document.getElementById('st-learned').textContent = rules.length;
+  document.getElementById('st-vocab').textContent = baseVocab.length + rules.length;
+  const total = words.reduce((s, w) => s + w.symbols.length * w.freq, 0);
+  document.getElementById('st-corpus-tokens').textContent = total;
+}
+
+function renderCorpusState() {
+  const pairs = countPairs();
+  const best = pairs.find(p => p.count >= 2);
+  let html = '';
+  for (const { symbols, freq } of words) {
+    let chips = '';
+    for (let i = 0; i < symbols.length; i++) {
+      let cls = '';
+      if (symbols[i] === lastMerged) cls = 'just-merged';
+      else if (best && i < symbols.length - 1 && symbols[i] === best.a && symbols[i + 1] === best.b) cls = 'pair-hl';
+      else if (best && i > 0 && symbols[i - 1] === best.a && symbols[i] === best.b) cls = 'pair-hl';
+      chips += chipHTML(symbols[i], cls);
+    }
+    html += `<span class="word-block">${chips}<span class="word-freq">×${freq}</span></span>`;
+  }
+  document.getElementById('corpus-state').innerHTML = html ||
+    '<span style="color:#8b949e;font-size:11px">Corpus is empty</span>';
+}
+
+function renderPairTable() {
+  const pairs = countPairs().slice(0, 12);
+  if (!pairs.length) {
+    document.getElementById('pair-table').innerHTML = '<span style="color:#8b949e;font-size:11px">No pairs left</span>';
+    return;
+  }
+  const bestIdx = pairs.findIndex(p => p.count >= 2);
+  let html = '<table class="pairs"><tr><th>#</th><th>Pair</th><th>Merged Token</th><th>Count</th></tr>';
+  pairs.forEach((p, i) => {
+    const cls = i === bestIdx ? 'best' : '';
+    html += `<tr class="${cls}"><td>${i + 1}</td>` +
+      `<td>${chipHTML(p.a)} + ${chipHTML(p.b)}</td>` +
+      `<td>${chipHTML(p.a + p.b)}</td><td>${p.count}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('pair-table').innerHTML = html;
+}
+
+function renderRules() {
+  if (!rules.length) {
+    document.getElementById('rules-list').innerHTML =
+      '<span style="color:#8b949e;font-size:11px">No merges yet — press ⏭ Merge Step or ▶ Train All</span>';
+    return;
+  }
+  document.getElementById('rules-list').innerHTML = rules.map(([a, b], i) =>
+    `<span class="rule-chip ${i === rules.length - 1 ? 'latest' : ''}">` +
+    `<span class="rule-idx">${i + 1}.</span>${chipHTML(a)}+${chipHTML(b)}→${chipHTML(a + b)}</span>`
+  ).join('');
+}
+
+function renderTokenize() {
+  const slider = document.getElementById('tokSlider');
+  const wasMax = +slider.value === +slider.max;
+  slider.max = rules.length;
+  if (wasMax) slider.value = rules.length;
+  const k = Math.min(+slider.value, rules.length);
+  document.getElementById('tokSliderVal').textContent = `${k} / ${rules.length}`;
+
+  const text = document.getElementById('userText').value;
+  const userWords = text.trim().split(/\s+/).filter(w => w.length);
+  let html = '', totalTokens = 0, totalChars = 0, unknownChars = new Set();
+
+  for (const w of userWords) {
+    let symbols = [...w, EOW];
+    [...w].forEach(c => { if (!baseVocab.includes(c)) unknownChars.add(c); });
+    for (let r = 0; r < k; r++) symbols = applyMerge(symbols, rules[r][0], rules[r][1]);
+    totalTokens += symbols.length;
+    totalChars += w.length;
+    html += `<span class="word-block">${symbols.map(s => chipHTML(s, '', true)).join('')}</span>`;
+  }
+  document.getElementById('tok-output').innerHTML = html ||
+    '<span style="color:#8b949e;font-size:11px">Type some text above</span>';
+
+  let stats = userWords.length
+    ? `<b>${totalTokens}</b> tokens for <b>${totalChars}</b> characters ` +
+      `(${(totalChars / Math.max(totalTokens, 1)).toFixed(2)} chars/token) · small number under each chip = token ID`
+    : '';
+  if (unknownChars.size) {
+    stats += `<br><span style="color:#d29922">Characters not in training corpus (kept as raw symbols, no ID): ${[...unknownChars].join(' ')}</span>`;
+  }
+  document.getElementById('tok-stats').innerHTML = stats;
+}
+
+function renderAll() {
+  renderStatus(); renderCorpusState(); renderPairTable(); renderRules(); renderTokenize();
+}
+
+// ------------------------------------------------------------------ training control
+function stopTraining() {
+  training = false;
+  if (trainTimer) { clearInterval(trainTimer); trainTimer = null; }
+  document.getElementById('trainBtn').textContent = '▶ Train All';
+}
+
+function startTraining() {
+  training = true;
+  document.getElementById('trainBtn').textContent = '⏸ Pause';
+  const stepsPerSec = +document.getElementById('speedSlider').value;
+  trainTimer = setInterval(() => {
+    const maxM = +document.getElementById('maxMerges').value;
+    if (rules.length >= maxM) { setMsg(`Reached max merges (${maxM}).`); stopTraining(); renderAll(); return; }
+    if (!mergeStep()) { renderAll(); return; }
+    renderAll();
+  }, 1000 / stepsPerSec);
+}
+
+function reset() {
+  stopTraining();
+  rules = []; lastMerged = null;
+  words = buildWordFreqs(document.getElementById('corpusText').value);
+  computeBaseVocab();
+  setMsg('');
+  document.getElementById('tokSlider').value = 0;
+  renderAll();
+}
+
+// ------------------------------------------------------------------ events
+document.getElementById('corpusSelect').addEventListener('change', e => {
+  if (e.target.value !== 'custom') {
+    document.getElementById('corpusText').value = corpora[e.target.value];
+  }
+  reset();
+});
+document.getElementById('corpusText').addEventListener('input', () => {
+  document.getElementById('corpusSelect').value = 'custom';
+  reset();
+});
+document.getElementById('stepBtn').addEventListener('click', () => {
+  stopTraining();
+  const maxM = +document.getElementById('maxMerges').value;
+  if (rules.length >= maxM) { setMsg(`Reached max merges (${maxM}).`); return; }
+  mergeStep(); renderAll();
+});
+document.getElementById('trainBtn').addEventListener('click', () => {
+  if (training) { stopTraining(); return; }
+  startTraining();
+});
+document.getElementById('resetBtn').addEventListener('click', reset);
+document.getElementById('speedSlider').addEventListener('input', e => {
+  document.getElementById('speedVal').textContent = e.target.value;
+  if (training) { stopTraining(); startTraining(); }
+});
+document.getElementById('tokSlider').addEventListener('input', renderTokenize);
+document.getElementById('userText').addEventListener('input', renderTokenize);
+document.getElementById('maxMerges').addEventListener('input', () => setMsg(''));
+
+// ------------------------------------------------------------------ init
+document.getElementById('corpusText').value = corpora.classic;
+reset();
+</script>
+</body>
+</html>

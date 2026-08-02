@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vision Transformer (ViT) Visualizer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; padding-bottom: 40px; }
+#header { padding: 16px 24px 12px; }
+#header h1 { font-size: 18px; margin-bottom: 6px; color: #f0f6fc; }
+#header p { font-size: 12px; color: #8b949e; line-height: 1.5; max-width: 900px; }
+#controls {
+  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  border: 1px solid #30363d; border-radius: 10px; margin: 8px 24px;
+}
+#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+#controls select, #controls input[type=number] { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+#controls input[type=number] { width: 50px; }
+#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
+#controls button:hover { background: #2ea043; }
+.section { margin: 12px 24px; }
+.section-title { font-size: 13px; color: #8b949e; margin-bottom: 8px; }
+canvas { background: #161b22; border: 1px solid #30363d; border-radius: 10px; display: block; }
+.container { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+.info { text-align: center; margin-top: 8px; font-size: 11px; color: #8b949e; }
+#pipeline { overflow-x: auto; }
+#pipeline-canvas { min-width: 100%; }
+.attn-wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+#patch-canvas { cursor: crosshair; }
+#attn-matrix { border-collapse: collapse; font-size: 10px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; }
+#attn-matrix th, #attn-matrix td { padding: 4px 6px; border: 1px solid #30363d; text-align: center; min-width: 36px; }
+#attn-matrix th { background: #0d1117; color: #8b949e; }
+#embeddings { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
+.emb-block { text-align: center; }
+.emb-label { font-size: 10px; color: #8b949e; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>Vision Transformer (ViT) Visualizer</h1>
+  <p>Image → Patches → Linear Embedding → Positional Encoding → Transformer Encoder → Classification. Select a patch to see its attention to other patches. The [CLS] token aggregates information for classification.</p>
+</div>
+<div id="controls">
+  <label>Image: <select id="imageSelect">
+    <option value="gradient">Gradient</option>
+    <option value="checkerboard">Checkerboard</option>
+    <option value="circles">Circles</option>
+    <option value="noise">Random Noise</option>
+    <option value="stripes">Stripes</option>
+  </select></label>
+  <label>Patch Size: <select id="patchSize">
+    <option value="4">4×4</option>
+    <option value="8" selected>8×8</option>
+    <option value="16">16×16</option>
+  </select></label>
+  <label>Heads: <select id="numHeads">
+    <option value="1">1</option>
+    <option value="2">2</option>
+    <option value="4" selected>4</option>
+  </select></label>
+  <label>Layer: <input type="number" id="layerIdx" value="1" min="1" max="6"></label>
+  <button id="regenerate">↺ Regenerate</button>
+</div>
+
+<div class="section">
+  <div class="section-title">ViT Pipeline</div>
+  <div id="pipeline"><canvas id="pipeline-canvas" width="1100" height="160"></canvas></div>
+  <div class="info">High-level architecture: Image → Patch Embedding → Transformer Encoder × L → MLP Head</div>
+</div>
+
+<div class="section">
+  <div class="section-title">Patch Extraction & Attention (click a patch)</div>
+  <div class="attn-wrap">
+    <div>
+      <canvas id="patch-canvas" width="320" height="320"></canvas>
+      <div class="info">Image split into patches · selected patch highlighted</div>
+    </div>
+    <div>
+      <canvas id="attn-canvas" width="320" height="320"></canvas>
+      <div class="info">Attention from selected patch to all patches</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Self-Attention Matrix (including [CLS] token)</div>
+  <div style="overflow-x:auto;" id="matrix-container"></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Patch Embeddings (first 8 dims visualized)</div>
+  <div id="embeddings"></div>
+</div>
+
+<script>
+const IMG_SIZE = 64;
+let patchSize = 8, numHeads = 4, selectedPatch = 0;
+let imageData = null, patches = [], numPatches = 0, gridSize = 0;
+let attentionWeights = [], embeddings = [];
+
+function generateImage(type) {
+  const c = document.createElement('canvas');
+  c.width = c.height = IMG_SIZE;
+  const ctx = c.getContext('2d');
+  const id = ctx.createImageData(IMG_SIZE, IMG_SIZE);
+  for (let y = 0; y < IMG_SIZE; y++) for (let x = 0; x < IMG_SIZE; x++) {
+    const i = (y * IMG_SIZE + x) * 4;
+    let r, g, b;
+    if (type === 'gradient') { r = (x / IMG_SIZE) * 255; g = (y / IMG_SIZE) * 255; b = 128; }
+    else if (type === 'checkerboard') { const v = ((Math.floor(x / 8) + Math.floor(y / 8)) % 2) * 255; r = g = b = v; }
+    else if (type === 'circles') { const d = Math.hypot(x - 32, y - 32); r = Math.sin(d * 0.3) * 127 + 128; g = Math.cos(d * 0.2) * 127 + 128; b = 100; }
+    else if (type === 'noise') { r = Math.random() * 255; g = Math.random() * 255; b = Math.random() * 255; }
+    else { r = Math.sin(x * 0.2) * 127 + 128; g = Math.sin(y * 0.15) * 127 + 128; b = 180; }
+    id.data[i] = r; id.data[i+1] = g; id.data[i+2] = b; id.data[i+3] = 255;
+  }
+  ctx.putImageData(id, 0, 0);
+  return ctx.getImageData(0, 0, IMG_SIZE, IMG_SIZE);
+}
+
+function extractPatches() {
+  gridSize = IMG_SIZE / patchSize;
+  numPatches = gridSize * gridSize;
+  patches = [];
+  for (let py = 0; py < gridSize; py++) for (let px = 0; px < gridSize; px++) {
+    const patch = [];
+    for (let y = 0; y < patchSize; y++) for (let x = 0; x < patchSize; x++) {
+      const i = ((py * patchSize + y) * IMG_SIZE + (px * patchSize + x)) * 4;
+      patch.push(imageData.data[i], imageData.data[i+1], imageData.data[i+2]);
+    }
+    patches.push(patch);
+  }
+}
+
+function softmax(arr) {
+  const max = Math.max(...arr);
+  const exps = arr.map(x => Math.exp(x - max));
+  const sum = exps.reduce((a, b) => a + b);
+  return exps.map(x => x / sum);
+}
+
+function generateAttention() {
+  const n = numPatches + 1; // +1 for [CLS]
+  const dK = 8;
+  attentionWeights = [];
+  for (let h = 0; h < numHeads; h++) {
+    const Q = Array.from({length: n}, () => Array.from({length: dK}, () => Math.random() * 2 - 1));
+    const K = Array.from({length: n}, () => Array.from({length: dK}, () => Math.random() * 2 - 1));
+    const scores = [];
+    const scale = Math.sqrt(dK);
+    for (let i = 0; i < n; i++) {
+      const row = [];
+      for (let j = 0; j < n; j++) {
+        let dot = 0;
+        for (let d = 0; d < dK; d++) dot += Q[i][d] * K[j][d];
+        row.push(dot / scale);
+      }
+      scores.push(softmax(row));
+    }
+    attentionWeights.push(scores);
+  }
+  // Average across heads
+  const avg = Array.from({length: n}, (_, i) => Array.from({length: n}, (_, j) => {
+    let s = 0; for (let h = 0; h < numHeads; h++) s += attentionWeights[h][i][j];
+    return s / numHeads;
+  }));
+  attentionWeights.avg = avg;
+}
+
+function generateEmbeddings() {
+  embeddings = [];
+  const dim = 8;
+  for (let i = 0; i <= numPatches; i++) {
+    embeddings.push(Array.from({length: dim}, () => Math.random() * 2 - 1));
+  }
+}
+
+function drawPipeline() {
+  const c = document.getElementById('pipeline-canvas');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  const stages = [
+    { label: 'Input Image', sub: `${IMG_SIZE}×${IMG_SIZE}×3`, color: '#58a6ff' },
+    { label: 'Patch Split', sub: `${numPatches} patches`, color: '#f0883e' },
+    { label: 'Linear Proj', sub: `${numPatches}×D`, color: '#7ee787' },
+    { label: '+ Pos Enc', sub: `(${numPatches}+1)×D`, color: '#d2a8ff' },
+    { label: 'Transformer', sub: `${numHeads} heads × L`, color: '#f778ba' },
+    { label: '[CLS] → MLP', sub: 'num_classes', color: '#ffa657' },
+  ];
+  const boxW = 140, boxH = 50, gap = 30, startX = 40, startY = 55;
+  stages.forEach((s, i) => {
+    const x = startX + i * (boxW + gap);
+    ctx.strokeStyle = s.color; ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, startY, boxW, boxH);
+    ctx.fillStyle = s.color; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(s.label, x + boxW / 2, startY + 20);
+    ctx.fillStyle = '#8b949e'; ctx.font = '10px monospace';
+    ctx.fillText(s.sub, x + boxW / 2, startY + 38);
+    if (i < stages.length - 1) {
+      ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x + boxW, startY + boxH / 2);
+      ctx.lineTo(x + boxW + gap, startY + boxH / 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + boxW + gap - 6, startY + boxH / 2 - 4);
+      ctx.lineTo(x + boxW + gap, startY + boxH / 2);
+      ctx.lineTo(x + boxW + gap - 6, startY + boxH / 2 + 4); ctx.stroke();
+    }
+  });
+}
+
+function drawPatches() {
+  const c = document.getElementById('patch-canvas');
+  const ctx = c.getContext('2d');
+  const scale = 320 / IMG_SIZE;
+  ctx.clearRect(0, 0, 320, 320);
+  // Draw image scaled up
+  const tempC = document.createElement('canvas');
+  tempC.width = tempC.height = IMG_SIZE;
+  tempC.getContext('2d').putImageData(imageData, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(tempC, 0, 0, 320, 320);
+  // Draw grid
+  ctx.strokeStyle = 'rgba(48,54,61,0.8)'; ctx.lineWidth = 1;
+  for (let i = 0; i <= gridSize; i++) {
+    const pos = i * patchSize * scale;
+    ctx.beginPath(); ctx.moveTo(pos, 0); ctx.lineTo(pos, 320); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, pos); ctx.lineTo(320, pos); ctx.stroke();
+  }
+  // Highlight selected patch
+  const px = (selectedPatch % gridSize) * patchSize * scale;
+  const py = Math.floor(selectedPatch / gridSize) * patchSize * scale;
+  ctx.strokeStyle = '#238636'; ctx.lineWidth = 3;
+  ctx.strokeRect(px + 1, py + 1, patchSize * scale - 2, patchSize * scale - 2);
+  // Patch number
+  ctx.fillStyle = '#238636'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(selectedPatch, px + patchSize * scale / 2, py + patchSize * scale / 2 + 4);
+}
+
+function drawAttention() {
+  const c = document.getElementById('attn-canvas');
+  const ctx = c.getContext('2d');
+  const scale = 320 / IMG_SIZE;
+  ctx.clearRect(0, 0, 320, 320);
+  // +1 offset because index 0 is [CLS] in attention matrix
+  const attnRow = attentionWeights.avg[selectedPatch + 1];
+  // Get attention to patches (skip CLS at index 0)
+  const patchAttn = attnRow.slice(1);
+  const maxA = Math.max(...patchAttn), minA = Math.min(...patchAttn);
+  const range = maxA - minA || 1;
+  for (let i = 0; i < numPatches; i++) {
+    const norm = (patchAttn[i] - minA) / range;
+    const px = (i % gridSize) * patchSize * scale;
+    const py = Math.floor(i / gridSize) * patchSize * scale;
+    const alpha = 0.1 + norm * 0.9;
+    ctx.fillStyle = i === selectedPatch
+      ? `rgba(35,134,54,${alpha})`
+      : `rgba(88,166,255,${alpha})`;
+    ctx.fillRect(px, py, patchSize * scale, patchSize * scale);
+    ctx.strokeStyle = 'rgba(48,54,61,0.5)'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(px, py, patchSize * scale, patchSize * scale);
+    // Show value
+    ctx.fillStyle = norm > 0.5 ? '#0d1117' : '#e6edf3';
+    ctx.font = '9px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(patchAttn[i].toFixed(2), px + patchSize * scale / 2, py + patchSize * scale / 2 + 3);
+  }
+}
+
+function drawMatrix() {
+  const n = numPatches + 1;
+  const avg = attentionWeights.avg;
+  const labels = ['[CLS]', ...Array.from({length: numPatches}, (_, i) => `P${i}`)];
+  // Only show subset if too many patches
+  const show = Math.min(n, 17);
+  let html = '<table id="attn-matrix"><tr><th></th>';
+  for (let j = 0; j < show; j++) html += `<th>${labels[j]}</th>`;
+  if (show < n) html += '<th>…</th>';
+  html += '</tr>';
+  for (let i = 0; i < show; i++) {
+    html += `<tr><th>${labels[i]}</th>`;
+    for (let j = 0; j < show; j++) {
+      const v = avg[i][j];
+      const t = v * numPatches; // Scale for color intensity since values sum to 1
+      const intensity = Math.min(t * 3, 1);
+      const r = Math.round(intensity * 88 + (1 - intensity) * 13);
+      const g = Math.round(intensity * 166 + (1 - intensity) * 17);
+      const b = Math.round(intensity * 255 + (1 - intensity) * 23);
+      const fg = intensity > 0.6 ? '#0d1117' : '#e6edf3';
+      html += `<td style="background:rgb(${r},${g},${b});color:${fg}">${v.toFixed(3)}</td>`;
+    }
+    if (show < n) html += '<td>…</td>';
+    html += '</tr>';
+  }
+  if (show < n) html += `<tr><th>…</th>${'<td>…</td>'.repeat(show + 1)}</tr>`;
+  html += '</table>';
+  document.getElementById('matrix-container').innerHTML = html;
+}
+
+function drawEmbeddings() {
+  const container = document.getElementById('embeddings');
+  const show = Math.min(numPatches + 1, 16);
+  let html = '';
+  for (let i = 0; i < show; i++) {
+    const label = i === 0 ? '[CLS]' : `P${i-1}`;
+    html += `<div class="emb-block"><div class="emb-label">${label}</div><canvas class="emb-canvas" width="40" height="80" data-idx="${i}"></canvas></div>`;
+  }
+  if (show < numPatches + 1) html += `<div class="emb-block"><div class="emb-label">…</div></div>`;
+  container.innerHTML = html;
+  document.querySelectorAll('.emb-canvas').forEach(c => {
+    const ctx = c.getContext('2d');
+    const idx = parseInt(c.dataset.idx);
+    const emb = embeddings[idx];
+    const barH = 80 / emb.length;
+    emb.forEach((v, d) => {
+      const norm = (v + 1) / 2; // map [-1,1] to [0,1]
+      ctx.fillStyle = `hsl(${210 + norm * 120}, 70%, ${30 + norm * 40}%)`;
+      ctx.fillRect(0, d * barH, 40, barH - 1);
+    });
+  });
+}
+
+function drawAll() {
+  patchSize = parseInt(document.getElementById('patchSize').value);
+  numHeads = parseInt(document.getElementById('numHeads').value);
+  imageData = generateImage(document.getElementById('imageSelect').value);
+  extractPatches();
+  selectedPatch = Math.min(selectedPatch, numPatches - 1);
+  generateAttention();
+  generateEmbeddings();
+  drawPipeline();
+  drawPatches();
+  drawAttention();
+  drawMatrix();
+  drawEmbeddings();
+}
+
+document.getElementById('patch-canvas').addEventListener('click', e => {
+  const rect = e.target.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const scale = 320 / IMG_SIZE;
+  const px = Math.floor(x / (patchSize * scale));
+  const py = Math.floor(y / (patchSize * scale));
+  if (px >= 0 && px < gridSize && py >= 0 && py < gridSize) {
+    selectedPatch = py * gridSize + px;
+    drawPatches();
+    drawAttention();
+    drawMatrix();
+  }
+});
+
+document.getElementById('imageSelect').addEventListener('change', drawAll);
+document.getElementById('patchSize').addEventListener('change', drawAll);
+document.getElementById('numHeads').addEventListener('change', drawAll);
+document.getElementById('layerIdx').addEventListener('change', () => { generateAttention(); drawAttention(); drawMatrix(); });
+document.getElementById('regenerate').addEventListener('click', drawAll);
+
+drawAll();
+</script>
+</body>
+</html>

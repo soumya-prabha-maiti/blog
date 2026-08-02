@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Transformer Attention Visualizer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; padding-bottom: 40px; }
+#header { padding: 16px 24px 12px; }
+#header h1 { font-size: 18px; margin-bottom: 6px; color: #f0f6fc; }
+#header p { font-size: 12px; color: #8b949e; line-height: 1.5; }
+#controls {
+  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  border: 1px solid #30363d; border-radius: 10px; margin: 8px 24px;
+}
+#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+#controls select { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
+#controls button:hover { background: #2ea043; }
+.section { margin: 12px 24px; }
+.section-title { font-size: 13px; color: #8b949e; margin-bottom: 8px; }
+canvas { background: #161b22; border: 1px solid #30363d; border-radius: 10px; display: block; }
+.container { display: flex; justify-content: center; }
+.info { text-align: center; margin-top: 8px; font-size: 11px; color: #8b949e; }
+#qkv-section { overflow-x: auto; }
+#qkv-table { border-collapse: collapse; font-size: 11px; width: 100%; background: #161b22; border: 1px solid #30363d; border-radius: 10px; }
+#qkv-table th, #qkv-table td { padding: 6px 10px; border: 1px solid #30363d; text-align: center; }
+#qkv-table th { background: #0d1117; color: #8b949e; }
+.vec-q { color: #58a6ff; }
+.vec-k { color: #f0883e; }
+.vec-v { color: #7ee787; }
+.matrices-wrap { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
+.matrix-block { text-align: center; overflow-x: auto; }
+.matrix-label { font-size: 12px; color: #8b949e; margin-bottom: 6px; }
+.matrix-table { border-collapse: collapse; font-size: 11px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; }
+.matrix-table th, .matrix-table td { padding: 5px 8px; border: 1px solid #30363d; text-align: center; min-width: 50px; }
+.matrix-table th { background: #0d1117; color: #8b949e; }
+.matrix-table td { color: #e6edf3; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>Transformer Attention Visualizer</h1>
+  <p>d_model = 32 · 8 heads · d_k = d_v = 4 per head. Q, K, V vectors are randomly generated per head. Attention scores = QK<sup>T</sup>/√d_k, then softmax applied row-wise.</p>
+</div>
+<div id="controls">
+  <label>Sentence: <select id="sentenceSelect">
+    <option value="0">The cat sat on the mat</option>
+    <option value="1">I love natural language processing</option>
+    <option value="2">Attention is all you need</option>
+  </select></label>
+  <label>Head: <select id="headSelect"></select></label>
+  <button id="randomize">↺ Randomize</button>
+</div>
+
+<div class="section">
+  <div class="container"><canvas id="canvas"></canvas></div>
+  <div class="info">Line opacity = attention weight · Hover tokens to highlight</div>
+</div>
+
+<div class="section">
+  <div class="section-title">Q, K, V Vectors (per head)</div>
+  <div id="qkv-section"></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Attention Matrices</div>
+  <div class="matrices-wrap">
+    <div class="matrix-block"><div class="matrix-label">Raw Scores (QK<sup>T</sup>/√d_k)</div><div id="matrix-raw"></div></div>
+    <div class="matrix-block"><div class="matrix-label">After Softmax</div><div id="matrix-soft"></div></div>
+  </div>
+</div>
+
+<script>
+const sentences = [
+  ["The", "cat", "sat", "on", "the", "mat"],
+  ["I", "love", "natural", "language", "processing"],
+  ["Attention", "is", "all", "you", "need"]
+];
+const numHeads = 8, dModel = 32, dK = 4;
+let data = {}; // cached per sentence+head
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let hoveredIdx = -1, hoveredSide = null;
+
+function softmax(arr) {
+  const max = Math.max(...arr);
+  const exps = arr.map(x => Math.exp(x - max));
+  const sum = exps.reduce((a, b) => a + b);
+  return exps.map(x => x / sum);
+}
+
+function randVec(len) { return Array.from({length: len}, () => (Math.random() * 2 - 1)); }
+
+function generateData(tokens, head) {
+  const key = `${tokens.join(',')}_${head}`;
+  if (!data[key]) {
+    const n = tokens.length;
+    const Q = [], K = [], V = [];
+    for (let i = 0; i < n; i++) { Q.push(randVec(dK)); K.push(randVec(dK)); V.push(randVec(dK)); }
+    // raw scores: QK^T / sqrt(dK)
+    const rawScores = [], softScores = [];
+    const scale = Math.sqrt(dK);
+    for (let i = 0; i < n; i++) {
+      const row = [];
+      for (let j = 0; j < n; j++) {
+        let dot = 0;
+        for (let d = 0; d < dK; d++) dot += Q[i][d] * K[j][d];
+        row.push(dot / scale);
+      }
+      rawScores.push(row);
+      softScores.push(softmax(row));
+    }
+    data[key] = { Q, K, V, rawScores, softScores };
+  }
+  return data[key];
+}
+
+function getTokens() { return sentences[document.getElementById('sentenceSelect').value]; }
+function getHead() { return parseInt(document.getElementById('headSelect').value); }
+
+function drawBipartite() {
+  const tokens = getTokens();
+  const head = getHead();
+  const { softScores } = generateData(tokens, head);
+  const n = tokens.length;
+  const tokenH = 36, gap = 12, padX = 160, padY = 60;
+  const totalH = n * (tokenH + gap) - gap;
+  const midGap = 300;
+  canvas.width = padX * 2 + midGap + 200;
+  canvas.height = totalH + padY * 2;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const leftX = padX, rightX = padX + midGap + 100;
+  const positions = [];
+  for (let i = 0; i < n; i++) positions.push(padY + i * (tokenH + gap) + tokenH / 2);
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const w = softScores[i][j];
+      if (w < 0.01) continue;
+      // Exaggerate differences: remap to [0,1] relative to row min/max, then power curve
+      const rowMin = Math.min(...softScores[i]), rowMax = Math.max(...softScores[i]);
+      const norm = rowMax > rowMin ? Math.pow((w - rowMin) / (rowMax - rowMin), 0.5) : 0.5;
+      const vis = 0.05 + norm * 0.95;
+      const relevant = hoveredIdx === -1 || (hoveredSide === 'left' && i === hoveredIdx) || (hoveredSide === 'right' && j === hoveredIdx);
+      if (!relevant) continue;
+      const alpha = vis;
+      ctx.strokeStyle = head < 4 ? `rgba(88,166,255,${alpha})` : `rgba(240,136,62,${alpha})`;
+      ctx.lineWidth = 1 + vis * 5;
+      ctx.beginPath();
+      ctx.moveTo(leftX + 50, positions[i]);
+      ctx.bezierCurveTo(leftX + 50 + midGap * 0.3, positions[i], rightX - 50 - midGap * 0.3, positions[j], rightX - 50, positions[j]);
+      ctx.stroke();
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    const hlL = hoveredSide === 'left' && hoveredIdx === i;
+    const hlR = hoveredSide === 'right' && hoveredIdx === i;
+    ctx.font = `${hlL ? 'bold ' : ''}13px monospace`;
+    ctx.fillStyle = hlL ? '#238636' : '#e6edf3';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(tokens[i], leftX + 45, positions[i]);
+    ctx.font = `${hlR ? 'bold ' : ''}13px monospace`;
+    ctx.fillStyle = hlR ? '#238636' : '#e6edf3';
+    ctx.textAlign = 'left';
+    ctx.fillText(tokens[i], rightX - 45, positions[i]);
+  }
+
+  ctx.fillStyle = '#8b949e'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Query (from)', leftX, padY - 20);
+  ctx.fillText('Key (to)', rightX, padY - 20);
+}
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const tokens = getTokens();
+  const n = tokens.length;
+  const tokenH = 36, gap = 12, padX = 160, padY = 60, midGap = 300;
+  const leftX = padX, rightX = padX + midGap + 100;
+  hoveredIdx = -1; hoveredSide = null;
+  for (let i = 0; i < n; i++) {
+    const py = padY + i * (tokenH + gap) + tokenH / 2;
+    if (Math.abs(y - py) < tokenH / 2) {
+      hoveredSide = x < (leftX + rightX) / 2 ? 'left' : 'right';
+      hoveredIdx = i; break;
+    }
+  }
+  drawBipartite();
+});
+canvas.addEventListener('mouseleave', () => { hoveredIdx = -1; hoveredSide = null; drawBipartite(); });
+
+function drawQKVTable() {
+  const tokens = getTokens();
+  const head = getHead();
+  const { Q, K, V } = generateData(tokens, head);
+  const fmt = v => v.toFixed(2);
+  let html = '<table id="qkv-table"><tr><th>Token</th><th class="vec-q">Q [d_k=4]</th><th class="vec-k">K [d_k=4]</th><th class="vec-v">V [d_v=4]</th></tr>';
+  for (let i = 0; i < tokens.length; i++) {
+    html += `<tr><td style="color:#f0f6fc;font-weight:bold">${tokens[i]}</td>`;
+    html += `<td class="vec-q">[${Q[i].map(fmt).join(', ')}]</td>`;
+    html += `<td class="vec-k">[${K[i].map(fmt).join(', ')}]</td>`;
+    html += `<td class="vec-v">[${V[i].map(fmt).join(', ')}]</td></tr>`;
+  }
+  html += '</table>';
+  document.getElementById('qkv-section').innerHTML = html;
+}
+
+function buildMatrixTable(matrix, tokens) {
+  const n = tokens.length;
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    if (matrix[i][j] < min) min = matrix[i][j];
+    if (matrix[i][j] > max) max = matrix[i][j];
+  }
+  const range = max - min || 1;
+  let html = '<table class="matrix-table"><tr><th></th>';
+  for (let j = 0; j < n; j++) html += `<th>${tokens[j]}</th>`;
+  html += '</tr>';
+  for (let i = 0; i < n; i++) {
+    html += `<tr><th>${tokens[i]}</th>`;
+    for (let j = 0; j < n; j++) {
+      const t = (matrix[i][j] - min) / range;
+      const r = Math.round(t * 255), g = Math.round((t < 0.5 ? t * 2 : 1) * 200), b = Math.round((1 - t) * 180);
+      const fg = t > 0.6 ? '#000' : '#e6edf3';
+      html += `<td style="background:rgb(${r},${g},${b});color:${fg}">${matrix[i][j].toFixed(2)}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+function drawAll() {
+  const tokens = getTokens();
+  const head = getHead();
+  const { rawScores, softScores } = generateData(tokens, head);
+  drawBipartite();
+  drawQKVTable();
+  document.getElementById('matrix-raw').innerHTML = buildMatrixTable(rawScores, tokens);
+  document.getElementById('matrix-soft').innerHTML = buildMatrixTable(softScores, tokens);
+}
+
+// Init
+const headSelect = document.getElementById('headSelect');
+for (let i = 0; i < numHeads; i++) headSelect.innerHTML += `<option value="${i}">Head ${i+1}</option>`;
+document.getElementById('sentenceSelect').addEventListener('change', drawAll);
+headSelect.addEventListener('change', drawAll);
+document.getElementById('randomize').addEventListener('click', () => { data = {}; drawAll(); });
+drawAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hierarchical Clustering &mdash; Dendrogram Animation</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('header-katex'));"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; }
+#header-katex { padding: 16px 24px 12px; }
+#header-katex h1 { font-size: 18px; margin-bottom: 6px; color: #f0f6fc; }
+#header-katex p { font-size: 12px; color: #8b949e; line-height: 2; }
+#controls {
+  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  border: 1px solid #30363d; border-radius: 10px; margin: 8px 24px;
+}
+#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+#controls input[type=range] { width: 100px; }
+#controls span { min-width: 30px; text-align: right; }
+#controls select {
+  background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px;
+  padding: 3px 6px; font-family: monospace; font-size: 12px;
+}
+#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
+#controls button:hover { background: #2ea043; }
+#canvas-wrap { padding: 8px 24px; }
+canvas { display: block; width: 100%; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
+#status { padding: 4px 28px 16px; font-size: 12px; color: #8b949e; }
+#status b { color: #e6edf3; }
+</style>
+</head>
+<body>
+<div id="header-katex">
+  <h1>Agglomerative Hierarchical Clustering</h1>
+  <p>Agglomerative (bottom-up) hierarchical clustering starts with every point as its own cluster. At each step, the two <em>closest</em> clusters are merged, until only one cluster remains. The sequence of merges forms a binary tree called a <b style="color:#e6edf3">dendrogram</b>: each merge is drawn as a U-shaped bracket whose height equals the distance at which the merge happened. How "closeness" between two clusters \(A\) and \(B\) is measured is called the <b style="color:#e6edf3">linkage</b>:
+  <br><br>
+  \[\text{single:}\quad d(A,B) = \min_{a \in A,\, b \in B} \lVert a - b \rVert \qquad\qquad \text{complete:}\quad d(A,B) = \max_{a \in A,\, b \in B} \lVert a - b \rVert\]
+  \[\text{average:}\quad d(A,B) = \frac{1}{|A||B|} \sum_{a \in A} \sum_{b \in B} \lVert a - b \rVert \qquad\qquad \text{centroid:}\quad d(A,B) = \lVert \mu_A - \mu_B \rVert\]
+  <br>
+  Watch the left panel to see clusters being merged (the dashed line shows the pair of clusters chosen and the distance defining their linkage), and the right panel to see the dendrogram grow with each merge. To get a flat clustering of \(k\) clusters, <b style="color:#e6edf3">cut</b> the dendrogram at some height: use the cut slider and see the scatter plot recolor instantly. Single linkage tends to produce chained, stringy merges; complete linkage produces compact balanced ones. (Note: centroid linkage can produce <em>inversions</em> &mdash; a merge lower than a previous one.)
+  </p>
+</div>
+<div id="controls">
+  <label>Points (n): <input type="number" id="in-n" min="3" max="50" step="1" value="18" style="width:52px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px; padding:3px 6px; font-family:monospace; font-size:12px;"></label>
+  <label>Linkage:
+    <select id="sel-linkage">
+      <option value="single">single</option>
+      <option value="complete">complete</option>
+      <option value="average" selected>average</option>
+      <option value="centroid">centroid</option>
+    </select>
+  </label>
+  <label>Speed (merges/s): <input type="range" id="sl-speed" min="0.25" max="4" step="0.25" value="1"><span id="v-speed">1</span></label>
+  <label>Cut height: <input type="range" id="sl-cut" min="0" max="1000" step="1" value="1000" style="width:140px"><span id="v-cut">max</span></label>
+  <label>Step: <input type="range" id="sl-seek" min="0" max="17" step="1" value="0" style="width:180px"><span id="v-seek" style="min-width:52px">0/17</span></label>
+  <button id="btn-play">&#9208; Pause</button>
+  <button id="btn-step">&#8614; Step</button>
+  <button id="btn-restart" title="Restart the algorithm on the same points">&#8634; Restart flow</button>
+  <button id="btn-new" title="Generate a fresh set of points">&#10022; New points</button>
+</div>
+<div id="canvas-wrap"><canvas id="c"></canvas></div>
+<div id="status"></div>
+<script>
+'use strict';
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+
+const PALETTE = ['#58a6ff','#f778ba','#3fb950','#d29922','#a371f7','#ff7b72','#39d2c0','#79c0ff','#ffa657','#7ee787','#d2a8ff','#e3b341'];
+const GRAY = '#8b949e';
+
+// ---------------------------------------------- State
+let N = 18;
+let linkage = 'average';
+let speed = 1;           // merges per second
+let points = [];         // data space [0,1]^2
+let merges = [];         // [{a, b, id, dist, pair:[pA,pB]}]  a,b = child node ids
+let nodes = [];          // node id -> {members:[...], dist, x (dendrogram slot)}
+let maxDist = 1;
+let cutFrac = 1;         // cut height as fraction of maxDist*1.02 (1 = above everything)
+let stepIdx = 0;         // current merge being animated
+let stepT = 0;           // progress [0,1] within current merge
+let playing = true;
+let lastTime = 0;
+let scrubbing = false;   // true while the user drags the step seekbar
+
+// ---------------------------------------------- Data generation
+function randn() { // Box-Muller
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function generatePoints(n) {
+  const k = n < 14 ? 3 : 4;
+  // well-separated blob centers
+  const centersPool = [[0.2,0.25],[0.78,0.2],[0.25,0.78],[0.75,0.75],[0.5,0.48]];
+  // shuffle pool
+  for (let i = centersPool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [centersPool[i], centersPool[j]] = [centersPool[j], centersPool[i]];
+  }
+  const centers = centersPool.slice(0, k);
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const c = centers[i % k];
+    let x = c[0] + randn() * 0.07;
+    let y = c[1] + randn() * 0.07;
+    x = Math.min(0.97, Math.max(0.03, x));
+    y = Math.min(0.97, Math.max(0.03, y));
+    pts.push([x, y]);
+  }
+  return pts;
+}
+
+// ---------------------------------------------- Clustering
+function dist2p(p, q) { return Math.hypot(p[0] - q[0], p[1] - q[1]); }
+
+function clusterDistance(A, B) {
+  // returns {d, pair} where pair = the two points that define/illustrate the distance
+  if (linkage === 'centroid') {
+    const ca = centroid(A), cb = centroid(B);
+    return { d: dist2p(ca, cb), pair: [ca, cb] };
+  }
+  let best = null, bestPair = null, sum = 0;
+  for (const i of A) for (const j of B) {
+    const d = dist2p(points[i], points[j]);
+    sum += d;
+    if (linkage === 'single') {
+      if (best === null || d < best) { best = d; bestPair = [points[i], points[j]]; }
+    } else { // complete & average both track max pair; average uses sum
+      if (best === null || d > best) { best = d; bestPair = [points[i], points[j]]; }
+    }
+  }
+  if (linkage === 'average') {
+    return { d: sum / (A.length * B.length), pair: [centroid(A), centroid(B)] };
+  }
+  return { d: best, pair: bestPair };
+}
+
+function centroid(members) {
+  let x = 0, y = 0;
+  for (const i of members) { x += points[i][0]; y += points[i][1]; }
+  return [x / members.length, y / members.length];
+}
+
+function computeClustering() {
+  merges = [];
+  nodes = [];
+  for (let i = 0; i < N; i++) nodes.push({ members: [i], dist: 0, left: -1, right: -1 });
+  let active = []; // node ids
+  for (let i = 0; i < N; i++) active.push(i);
+
+  while (active.length > 1) {
+    let bi = 0, bj = 1, bd = Infinity, bpair = null;
+    for (let i = 0; i < active.length; i++) {
+      for (let j = i + 1; j < active.length; j++) {
+        const r = clusterDistance(nodes[active[i]].members, nodes[active[j]].members);
+        if (r.d < bd) { bd = r.d; bi = i; bj = j; bpair = r.pair; }
+      }
+    }
+    const a = active[bi], b = active[bj];
+    const id = nodes.length;
+    nodes.push({ members: nodes[a].members.concat(nodes[b].members), dist: bd, left: a, right: b });
+    merges.push({ a, b, id, dist: bd, pair: bpair });
+    active.splice(bj, 1);
+    active.splice(bi, 1);
+    active.push(id);
+  }
+  maxDist = Math.max(...merges.map(m => m.dist));
+
+  // dendrogram leaf ordering: in-order traversal of the final tree
+  const order = [];
+  (function walk(id) {
+    if (nodes[id].left === -1) { order.push(id); return; }
+    walk(nodes[id].left); walk(nodes[id].right);
+  })(nodes.length - 1);
+  order.forEach((leafId, slot) => { nodes[leafId].x = slot; });
+  // internal node x = midpoint of children
+  for (let id = N; id < nodes.length; id++) {
+    nodes[id].x = (nodes[nodes[id].left].x + nodes[nodes[id].right].x) / 2;
+  }
+}
+
+// partition after k completed merges, further restricted by cut height
+function partitionAt(k, cutH) {
+  const parent = new Array(nodes.length).fill(-1);
+  function find(x) { while (parent[x] !== -1) x = parent[x]; return x; }
+  for (let j = 0; j < k; j++) {
+    const m = merges[j];
+    if (m.dist <= cutH) {
+      parent[find(m.a)] = m.id;
+      parent[find(m.b)] = m.id;
+    }
+  }
+  const rootOf = new Array(N);
+  for (let i = 0; i < N; i++) rootOf[i] = find(i);
+  return { rootOf, find };
+}
+
+// stable color per cluster: color of the smallest member index
+function clusterColor(root, rootOf) {
+  let minIdx = N, size = 0;
+  for (let i = 0; i < N; i++) if (rootOf[i] === root) { size++; if (i < minIdx) minIdx = i; }
+  if (size <= 1) return GRAY;
+  return PALETTE[minIdx % PALETTE.length];
+}
+
+// ---------------------------------------------- Geometry helpers
+function convexHull(pts) {
+  if (pts.length < 3) return pts.slice();
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o, a, b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]);
+  const lower = [], upper = [];
+  for (const pt of p) {
+    while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], pt) <= 0) lower.pop();
+    lower.push(pt);
+  }
+  for (let i = p.length - 1; i >= 0; i--) {
+    while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p[i]) <= 0) upper.pop();
+    upper.push(p[i]);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
+// ---------------------------------------------- Layout
+let W = 0, H = 0, dpr = 1;
+const CANVAS_H = 520;
+let scatter = {}, dendro = {};
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = canvas.clientWidth || (window.innerWidth - 48);
+  H = CANVAS_H;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const split = Math.floor(W * 0.44);
+  scatter = { x: 20, y: 40, w: split - 40, h: H - 80 };
+  dendro  = { x: split + 40, y: 40, w: W - split - 70, h: H - 110 };
+}
+
+function sx(p) { return scatter.x + p[0] * scatter.w; }
+function sy(p) { return scatter.y + p[1] * scatter.h; }
+function dyOf(d) { // dendrogram y for a merge distance
+  const scale = maxDist * 1.02;
+  return dendro.y + dendro.h - (d / scale) * dendro.h;
+}
+function dxOf(slot) {
+  const step = dendro.w / Math.max(1, N - 1);
+  return dendro.x + slot * step;
+}
+
+// ---------------------------------------------- Drawing
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  const cutH = cutFrac * maxDist * 1.02;
+  const k = stepIdx;                       // completed merges
+  const { rootOf } = partitionAt(k, cutH);
+
+  // panel titles
+  ctx.fillStyle = '#f0f6fc';
+  ctx.font = '13px monospace';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText('Data points (2D)', scatter.x, 24);
+  ctx.fillText('Dendrogram', dendro.x, 24);
+
+  drawDendrogram(k, cutH, rootOf);
+  drawScatter(k, cutH, rootOf);
+  updateStatus(k, cutH, rootOf);
+}
+
+function drawScatter(k, cutH, rootOf) {
+  // panel frame
+  ctx.strokeStyle = '#30363d';
+  ctx.strokeRect(scatter.x - 10, scatter.y - 10, scatter.w + 20, scatter.h + 20);
+
+  // group points by cluster root
+  const groups = {};
+  for (let i = 0; i < N; i++) (groups[rootOf[i]] = groups[rootOf[i]] || []).push(i);
+
+  // hull blobs for multi-point clusters
+  for (const root in groups) {
+    const g = groups[root];
+    if (g.length < 2) continue;
+    const color = clusterColor(+root, rootOf);
+    const hull = convexHull(g.map(i => [sx(points[i]), sy(points[i])]));
+    ctx.beginPath();
+    hull.forEach((p, idx) => idx === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]));
+    ctx.closePath();
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.lineWidth = 30;
+    ctx.globalAlpha = 0.13;
+    ctx.strokeStyle = color; ctx.fillStyle = color;
+    ctx.stroke(); ctx.fill();
+    ctx.restore();
+  }
+
+  // current merge highlight
+  if (stepIdx < merges.length) {
+    const m = merges[stepIdx];
+    const t = stepT;
+    // pulsing rings around the two clusters being merged
+    const pulse = 3 + 2.5 * Math.sin(performance.now() / 150);
+    for (const child of [m.a, m.b]) {
+      for (const i of nodes[child].members) {
+        ctx.beginPath();
+        ctx.arc(sx(points[i]), sy(points[i]), 9 + pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(240,246,252,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    }
+    // dashed linkage line + distance label
+    const [pA, pB] = m.pair;
+    ctx.save();
+    ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = '#f0f6fc';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(sx(pA), sy(pA));
+    ctx.lineTo(sx(pB), sy(pB));
+    ctx.stroke();
+    ctx.restore();
+    const mx = (sx(pA) + sx(pB)) / 2, my = (sy(pA) + sy(pB)) / 2;
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#0d1117';
+    const label = 'd=' + m.dist.toFixed(3);
+    const tw = ctx.measureText(label).width;
+    ctx.fillRect(mx - tw / 2 - 4, my - 18, tw + 8, 14);
+    ctx.fillStyle = '#f0f6fc';
+    ctx.fillText(label, mx, my - 7);
+  }
+
+  // points + labels
+  ctx.font = '10px monospace';
+  for (let i = 0; i < N; i++) {
+    const color = clusterColor(rootOf[i], rootOf);
+    const x = sx(points[i]), y = sy(points[i]);
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = color === GRAY ? '#e6edf3' : color;
+    ctx.fill();
+    ctx.strokeStyle = '#0d1117';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#8b949e';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(i), x + 8, y + 4);
+  }
+}
+
+function drawDendrogram(k, cutH, rootOf) {
+  const baseline = dendro.y + dendro.h;
+
+  // axis (distance scale) on the left of dendrogram panel
+  ctx.strokeStyle = '#30363d';
+  ctx.beginPath();
+  ctx.moveTo(dendro.x - 18, dendro.y);
+  ctx.lineTo(dendro.x - 18, baseline);
+  ctx.stroke();
+  ctx.font = '10px monospace';
+  ctx.fillStyle = '#8b949e';
+  ctx.textAlign = 'right';
+  const ticks = 5;
+  for (let t = 0; t <= ticks; t++) {
+    const d = (maxDist * 1.02) * t / ticks;
+    const y = dyOf(d);
+    ctx.fillText(d.toFixed(2), dendro.x - 24, y + 3);
+    ctx.beginPath();
+    ctx.moveTo(dendro.x - 21, y); ctx.lineTo(dendro.x - 15, y);
+    ctx.stroke();
+  }
+
+  // "water level" line at current merge distance while animating
+  if (stepIdx < merges.length && playing !== null) {
+    const y = dyOf(merges[stepIdx].dist);
+    ctx.save();
+    ctx.setLineDash([2, 4]);
+    ctx.strokeStyle = 'rgba(139,148,158,0.35)';
+    ctx.beginPath();
+    ctx.moveTo(dendro.x - 12, y); ctx.lineTo(dendro.x + dendro.w + 10, y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // node top-y: leaves sit at baseline, merged nodes at their merge height
+  const topY = id => nodes[id].left === -1 ? baseline : dyOf(nodes[id].dist);
+
+  // completed brackets
+  for (let j = 0; j < merges.length; j++) {
+    const m = merges[j];
+    let frac = 0;
+    if (j < k) frac = 1;
+    else if (j === stepIdx) frac = Math.max(0, (stepT - 0.45) / 0.55); // bracket grows in second phase
+    if (frac <= 0) continue;
+
+    const xa = dxOf(nodes[m.a].x), xb = dxOf(nodes[m.b].x);
+    const ya = topY(m.a), yb = topY(m.b);
+    const ym = dyOf(m.dist);
+    // link color: cluster color if below cut, otherwise gray
+    let color = GRAY;
+    if (m.dist <= cutH && j < k) color = clusterColor(rootOf[nodes[m.a].members[0]] , rootOf);
+    if (j === stepIdx) color = '#f0f6fc';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = j === stepIdx ? 2 : 1.5;
+
+    // grow vertical arms first (0..0.7 of frac), then horizontal (0.7..1)
+    const vf = Math.min(1, frac / 0.7);
+    const hf = Math.max(0, (frac - 0.7) / 0.3);
+    ctx.beginPath();
+    ctx.moveTo(xa, ya); ctx.lineTo(xa, ya + (ym - ya) * vf);
+    ctx.moveTo(xb, yb); ctx.lineTo(xb, yb + (ym - yb) * vf);
+    ctx.stroke();
+    if (hf > 0) {
+      ctx.beginPath();
+      const xm = (xa + xb) / 2;
+      ctx.moveTo(xm - (xm - xa) * hf, ym);
+      ctx.lineTo(xm + (xb - xm) * hf, ym);
+      ctx.stroke();
+    }
+  }
+
+  // leaf labels
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  for (let i = 0; i < N; i++) {
+    const x = dxOf(nodes[i].x);
+    const color = clusterColor(rootOf[i], rootOf);
+    ctx.fillStyle = color === GRAY ? '#8b949e' : color;
+    ctx.fillText(String(i), x, baseline + 16);
+    // small tick at leaf
+    ctx.strokeStyle = '#30363d';
+    ctx.beginPath();
+    ctx.moveTo(x, baseline); ctx.lineTo(x, baseline + 4);
+    ctx.stroke();
+  }
+
+  // cut line
+  if (cutFrac < 1) {
+    const y = dyOf(cutH);
+    ctx.save();
+    ctx.setLineDash([8, 6]);
+    ctx.strokeStyle = '#d29922';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(dendro.x - 12, y);
+    ctx.lineTo(dendro.x + dendro.w + 10, y);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#d29922';
+    ctx.textAlign = 'left';
+    ctx.font = '11px monospace';
+    ctx.fillText('cut = ' + cutH.toFixed(3), dendro.x + dendro.w - 90, y - 6);
+  }
+}
+
+function updateStatus(k, cutH, rootOf) {
+  const clusters = new Set();
+  for (let i = 0; i < N; i++) clusters.add(rootOf[i]);
+  let msg;
+  if (stepIdx < merges.length) {
+    const m = merges[stepIdx];
+    msg = `Merge <b>${stepIdx + 1}/${merges.length}</b> &mdash; merging clusters {${nodes[m.a].members.join(',')}} and {${nodes[m.b].members.join(',')}} at distance <b>${m.dist.toFixed(3)}</b>`;
+  } else {
+    msg = `Done &mdash; all <b>${merges.length}</b> merges complete. Move the cut slider to slice the dendrogram into flat clusters.`;
+  }
+  msg += ` &nbsp;|&nbsp; current clusters: <b>${clusters.size}</b>`;
+  if (cutFrac < 1) msg += ` (cut at ${cutH.toFixed(3)})`;
+  statusEl.innerHTML = msg;
+}
+
+// ---------------------------------------------- Animation loop
+function tick(time) {
+  if (!lastTime) lastTime = time;
+  const dt = (time - lastTime) / 1000;
+  lastTime = time;
+  if (playing && !scrubbing && stepIdx < merges.length) {
+    stepT += dt * speed;
+    if (stepT >= 1) {
+      stepIdx++;
+      stepT = 0;
+    }
+  }
+  if (!scrubbing) syncSeek();
+  draw();
+  requestAnimationFrame(tick);
+}
+
+// ---------------------------------------------- Controls
+const seekEl = document.getElementById('sl-seek');
+const seekVal = document.getElementById('v-seek');
+
+function syncSeek() {
+  seekEl.max = merges.length;
+  seekEl.value = stepIdx;
+  seekVal.textContent = stepIdx + '/' + merges.length;
+}
+
+function reset(regen) {
+  if (regen) points = generatePoints(N);
+  computeClustering();
+  stepIdx = 0; stepT = 0;
+  cutFrac = 1;
+  document.getElementById('sl-cut').value = 1000;
+  document.getElementById('v-cut').textContent = 'max';
+  syncSeek();
+}
+
+document.getElementById('in-n').addEventListener('change', e => {
+  let n = Math.round(+e.target.value);
+  if (isNaN(n)) n = N;
+  n = Math.min(50, Math.max(3, n));
+  e.target.value = n;
+  N = n;
+  reset(true);
+});
+document.getElementById('sel-linkage').addEventListener('change', e => {
+  linkage = e.target.value;
+  reset(false); // same points, new linkage — compare shapes
+});
+document.getElementById('sl-speed').addEventListener('input', e => {
+  speed = +e.target.value;
+  document.getElementById('v-speed').textContent = speed;
+});
+document.getElementById('sl-cut').addEventListener('input', e => {
+  cutFrac = +e.target.value / 1000;
+  document.getElementById('v-cut').textContent = cutFrac >= 1 ? 'max' : (cutFrac * maxDist * 1.02).toFixed(2);
+});
+seekEl.addEventListener('input', e => {
+  stepIdx = Math.min(merges.length, Math.max(0, Math.round(+e.target.value)));
+  stepT = 0;
+  scrubbing = true;
+  seekVal.textContent = stepIdx + '/' + merges.length;
+});
+seekEl.addEventListener('change', () => { scrubbing = false; });
+document.getElementById('btn-play').addEventListener('click', e => {
+  playing = !playing;
+  e.target.innerHTML = playing ? '&#9208; Pause' : '&#9654; Play';
+});
+document.getElementById('btn-step').addEventListener('click', () => {
+  if (stepIdx < merges.length) { stepIdx++; stepT = 0; }
+});
+document.getElementById('btn-restart').addEventListener('click', () => {
+  stepIdx = 0; stepT = 0;
+  syncSeek();
+});
+document.getElementById('btn-new').addEventListener('click', () => reset(true));
+
+window.addEventListener('resize', resize);
+
+// ---------------------------------------------- Init
+resize();
+reset(true);
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
