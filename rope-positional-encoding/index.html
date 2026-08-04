@@ -2,35 +2,25 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>RoPE - Rotary Position Embedding Visualization</title>
+<title>AI Visualizations</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('explanation'));"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('post'));"></script>
+<link rel="stylesheet" href="../assets/blog.css">
+<script defer src="../assets/posts.js"></script>
+<script defer src="../assets/post-header.js"></script>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; }
-#explanation { padding: 16px 24px 12px; }
-#explanation h1 { font-size: 18px; margin-bottom: 6px; color: #f0f6fc; }
-#explanation p { font-size: 12px; color: #8b949e; line-height: 2; }
-#controls {
-  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
-  border: 1px solid #30363d; border-radius: 10px; margin: 8px 24px;
-}
-#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
-#controls input[type=range] { width: 100px; }
-#controls span { min-width: 30px; text-align: right; }
-#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
-#controls button:hover { background: #2ea043; }
-#view-tabs { padding: 8px 24px; display: flex; gap: 8px; }
+/* Post-specific. blog.css provides the base theme, article column and #controls. */
+#view-tabs { padding: 8px 0; display: flex; gap: 8px; }
 #view-tabs button { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-family: monospace; font-size: 12px; }
 #view-tabs button.active { background: #238636; color: #fff; border-color: #238636; }
-canvas { display: block; margin: 8px 24px; border-radius: 8px; background: #0d1117; }
-#info { padding: 8px 24px; font-size: 11px; color: #8b949e; }
+/* Fixed-size canvas: scale it down rather than overflow the column. */
+canvas { position: static; max-width: 100%; height: auto; margin: 8px 0; border-radius: 8px; background: #0d1117; }
+#info { padding: 8px 0; font-size: 11px; color: #8b949e; }
 </style>
 </head>
 <body>
-<div id="explanation">
-  <h1>RoPE - Rotary Position Embedding</h1>
+<article id="post">
   <p>
     Unlike sinusoidal PE (added at input), RoPE is applied <strong>inside every attention layer</strong> by rotating query and key vectors.
     <br><br>
@@ -46,7 +36,6 @@ canvas { display: block; margin: 8px 24px; border-radius: 8px; background: #0d11
     <br>
     <strong>View 3 - Before vs After:</strong> Shows the Q/K vectors before and after RoPE rotation side by side.
   </p>
-</div>
 
 <div id="controls">
   <label>d_model: <input type="range" id="sl-d" min="8" max="128" step="8" value="32"><span id="v-d">32</span></label>
@@ -65,6 +54,7 @@ canvas { display: block; margin: 8px 24px; border-radius: 8px; background: #0d11
 <canvas id="c" width="900" height="500"></canvas>
 <div id="info"></div>
 
+</article>
 <script>
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');

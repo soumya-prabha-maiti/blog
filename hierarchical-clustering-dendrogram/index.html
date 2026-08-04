@@ -2,38 +2,28 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Hierarchical Clustering &mdash; Dendrogram Animation</title>
+<title>AI Visualizations</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('header-katex'));"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('post'));"></script>
+<link rel="stylesheet" href="../assets/blog.css">
+<script defer src="../assets/posts.js"></script>
+<script defer src="../assets/post-header.js"></script>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; }
-#header-katex { padding: 16px 24px 12px; }
-#header-katex h1 { font-size: 18px; margin-bottom: 6px; color: #f0f6fc; }
-#header-katex p { font-size: 12px; color: #8b949e; line-height: 2; }
-#controls {
-  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
-  border: 1px solid #30363d; border-radius: 10px; margin: 8px 24px;
-}
-#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
-#controls input[type=range] { width: 100px; }
-#controls span { min-width: 30px; text-align: right; }
+/* Post-specific. blog.css provides the base theme, article column and #controls. */
 #controls select {
   background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px;
   padding: 3px 6px; font-family: monospace; font-size: 12px;
 }
-#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
-#controls button:hover { background: #2ea043; }
-#canvas-wrap { padding: 8px 24px; }
-canvas { display: block; width: 100%; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
-#status { padding: 4px 28px 16px; font-size: 12px; color: #8b949e; }
+/* This canvas scales to the column instead of scrolling horizontally. */
+#canvas-wrap { overflow: visible; min-height: 0; padding: 8px 0; }
+canvas { position: static; width: 100%; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
+#status { padding: 4px 0 16px; font-size: 12px; color: #8b949e; }
 #status b { color: #e6edf3; }
 </style>
 </head>
 <body>
-<div id="header-katex">
-  <h1>Agglomerative Hierarchical Clustering</h1>
+<article id="post">
   <p>Agglomerative (bottom-up) hierarchical clustering starts with every point as its own cluster. At each step, the two <em>closest</em> clusters are merged, until only one cluster remains. The sequence of merges forms a binary tree called a <b style="color:#e6edf3">dendrogram</b>: each merge is drawn as a U-shaped bracket whose height equals the distance at which the merge happened. How "closeness" between two clusters \(A\) and \(B\) is measured is called the <b style="color:#e6edf3">linkage</b>:
   <br><br>
   \[\text{single:}\quad d(A,B) = \min_{a \in A,\, b \in B} \lVert a - b \rVert \qquad\qquad \text{complete:}\quad d(A,B) = \max_{a \in A,\, b \in B} \lVert a - b \rVert\]
@@ -41,7 +31,6 @@ canvas { display: block; width: 100%; border: 1px solid #30363d; border-radius: 
   <br>
   Watch the left panel to see clusters being merged (the dashed line shows the pair of clusters chosen and the distance defining their linkage), and the right panel to see the dendrogram grow with each merge. To get a flat clustering of \(k\) clusters, <b style="color:#e6edf3">cut</b> the dendrogram at some height: use the cut slider and see the scatter plot recolor instantly. Single linkage tends to produce chained, stringy merges; complete linkage produces compact balanced ones. (Note: centroid linkage can produce <em>inversions</em> &mdash; a merge lower than a previous one.)
   </p>
-</div>
 <div id="controls">
   <label>Points (n): <input type="number" id="in-n" min="3" max="50" step="1" value="18" style="width:52px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px; padding:3px 6px; font-family:monospace; font-size:12px;"></label>
   <label>Linkage:
@@ -62,6 +51,7 @@ canvas { display: block; width: 100%; border: 1px solid #30363d; border-radius: 
 </div>
 <div id="canvas-wrap"><canvas id="c"></canvas></div>
 <div id="status"></div>
+</article>
 <script>
 'use strict';
 const canvas = document.getElementById('c');

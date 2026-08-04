@@ -2,40 +2,33 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Gradient Descent Optimizer Comparison</title>
+<title>AI Visualizations</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('formulas-section'),{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+<link rel="stylesheet" href="../assets/blog.css">
+<script defer src="../assets/posts.js"></script>
+<script defer src="../assets/post-header.js"></script>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow-x: hidden; padding-bottom: 40px; }
-#header { padding: 16px 24px 12px; }
-#header h1 { font-size: 18px; margin-bottom: 6px; color: #f0f6fc; }
-#header p { font-size: 12px; color: #8b949e; line-height: 1.5; max-width: 900px; }
-#controls {
-  background: #161b22; padding: 10px 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
-  border: 1px solid #30363d; border-radius: 10px; margin: 8px 24px;
-}
-#controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+/* Post-specific. blog.css provides the base theme, article column and #controls. */
+body { padding-bottom: 40px; }
 #controls select, #controls input[type=number] { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
 #controls input[type=number] { width: 70px; }
-#controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; }
-#controls button:hover { background: #2ea043; }
 #controls button.reset { background: #da3633; }
 #controls button.reset:hover { background: #f85149; }
-.section { margin: 12px 24px; }
+.section { margin: 12px 0; }
 .section-title { font-size: 13px; color: #8b949e; margin-bottom: 8px; }
-canvas { background: #161b22; border: 1px solid #30363d; border-radius: 10px; display: block; }
+canvas { position: static; max-width: 100%; background: #161b22; border: 1px solid #30363d; border-radius: 10px; }
 .canvas-wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
-#legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 24px; font-size: 12px; }
+#legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0; font-size: 12px; }
 .legend-item { display: flex; align-items: center; gap: 6px; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
-#stats { background: #161b22; border: 1px solid #30363d; border-radius: 10px; margin: 12px 24px; padding: 12px 18px; font-size: 11px; overflow-x: auto; }
+#stats { background: #161b22; border: 1px solid #30363d; border-radius: 10px; margin: 12px 0; padding: 12px 18px; font-size: 11px; overflow-x: auto; }
 #stats table { border-collapse: collapse; width: 100%; }
 #stats th, #stats td { padding: 6px 12px; border: 1px solid #30363d; text-align: center; }
 #stats th { background: #0d1117; color: #8b949e; }
 .info { text-align: center; margin-top: 8px; font-size: 11px; color: #8b949e; }
-#formulas { display: flex; gap: 16px; overflow-x: auto; padding: 12px 24px; scroll-snap-type: x mandatory; }
+#formulas { display: flex; gap: 16px; overflow-x: auto; padding: 12px 0; scroll-snap-type: x mandatory; }
 #formulas::-webkit-scrollbar { height: 6px; }
 #formulas::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
 .formula-card { flex: 0 0 auto; background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 18px 24px; scroll-snap-align: start; }
@@ -45,10 +38,9 @@ canvas { background: #161b22; border: 1px solid #30363d; border-radius: 10px; di
 </style>
 </head>
 <body>
-<div id="header">
-  <h1>Gradient Descent Optimizer Comparison</h1>
+<article id="post">
   <p>Visualize how different optimizers navigate loss surfaces. Each dot represents an optimizer's position as it descends toward the minimum. Compare convergence speed, oscillation, and path efficiency across popular optimization algorithms.</p>
-</div>
+
 <div id="controls">
   <label>Surface: <select id="surfaceSelect">
     <option value="beale">Beale</option>
@@ -102,6 +94,7 @@ canvas { background: #161b22; border: 1px solid #30363d; border-radius: 10px; di
 </div>
 </div>
 
+</article>
 <script>
 const optimizers = [
   { name: 'SGD', color: '#58a6ff' },
