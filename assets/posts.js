@@ -9,6 +9,20 @@
    Plain script rather than JSON so it also works over file:// */
 window.POSTS = [
   {
+    slug: 'types-of-clustering',
+    title: 'The Four Families of Clustering',
+    blurb: 'Centroid, density, distribution and hierarchical clustering: what each family assumes, where it shines, and the data that breaks it.',
+    date: '2026-08-09',
+    tags: ['clustering', 'unsupervised-learning']
+  },
+  {
+    slug: 'dbscan',
+    title: 'DBSCAN: Clustering by Density',
+    blurb: 'Core, border and noise points, and a flood fill that refuses to leak: watch DBSCAN grow clusters one neighborhood at a time.',
+    date: '2026-09-23',
+    tags: ['clustering', 'unsupervised-learning']
+  },
+  {
     slug: 'sinusoidal-positional-encoding-transformers',
     title: 'Sinusoidal Positional Encoding: Giving Transformers a Sense of Order',
     blurb: 'How sine and cosine waves of different frequencies give a transformer a sense of word order, shown as rotating phasors.',

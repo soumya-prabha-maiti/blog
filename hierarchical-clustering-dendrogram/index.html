@@ -24,13 +24,36 @@ canvas { position: static; width: 100%; border: 1px solid #30363d; border-radius
 </head>
 <body>
 <article id="post">
-  <p>Agglomerative (bottom-up) hierarchical clustering starts with every point as its own cluster. At each step, the two <em>closest</em> clusters are merged, until only one cluster remains. The sequence of merges forms a binary tree called a <b style="color:#e6edf3">dendrogram</b>: each merge is drawn as a U-shaped bracket whose height equals the distance at which the merge happened. How "closeness" between two clusters \(A\) and \(B\) is measured is called the <b style="color:#e6edf3">linkage</b>:
-  <br><br>
+  <p>Start with every point in a cluster of its own. Find the two closest clusters, merge them, repeat. When a single cluster is left, stop. That is all there is to agglomerative hierarchical clustering, sometimes called bottom-up for obvious reasons.</p>
+
+  <p>The final cluster is not the point. It contains everything, so it tells you nothing. What you actually want is the order the merges happened in.</p>
+
+  <h2>The dendrogram</h2>
+  <p>Those merges form a binary tree, drawn here as a dendrogram. Each merge is a U-shaped bracket, and the height of the bracket is the distance at which the merge happened. Cheap merges sit low, expensive ones sit high. Read the heights and you can see where the algorithm was joining obvious neighbors and where it was scraping the barrel.</p>
+
+  <h2>What "closest" means</h2>
+  <p>Two points have an obvious distance between them. Two clusters do not, and the definition you pick is called the linkage. Four of them, for clusters \(A\) and \(B\):</p>
+
   \[\text{single:}\quad d(A,B) = \min_{a \in A,\, b \in B} \lVert a - b \rVert \qquad\qquad \text{complete:}\quad d(A,B) = \max_{a \in A,\, b \in B} \lVert a - b \rVert\]
   \[\text{average:}\quad d(A,B) = \frac{1}{|A||B|} \sum_{a \in A} \sum_{b \in B} \lVert a - b \rVert \qquad\qquad \text{centroid:}\quad d(A,B) = \lVert \mu_A - \mu_B \rVert\]
-  <br>
-  Watch the left panel to see clusters being merged (the dashed line shows the pair of clusters chosen and the distance defining their linkage), and the right panel to see the dendrogram grow with each merge. To get a flat clustering of \(k\) clusters, <b style="color:#e6edf3">cut</b> the dendrogram at some height: use the cut slider and see the scatter plot recolor instantly. Single linkage tends to produce chained, stringy merges; complete linkage produces compact balanced ones. (Note: centroid linkage can produce <em>inversions</em> &mdash; a merge lower than a previous one.)
-  </p>
+
+  <p>Single linkage only asks for the closest pair of members, so one point close to a neighboring cluster is enough to pull the whole thing together. Chained, stringy merges are the result. Complete linkage judges by the worst case instead, the farthest pair, and tends to produce compact balanced groups. Average takes the mean over every cross-cluster pair. Centroid ignores members altogether and compares the two cluster means \(\mu_A\) and \(\mu_B\).</p>
+
+  <p>That last one has a quirk worth knowing about. Centroid linkage can produce an inversion: a merge that sits lower than one that came before it. The tree stops rising monotonically, which makes it a good deal harder to read.</p>
+
+  <h2>Reading the two panels</h2>
+  <p>On the left is the data. The sample points are drawn from randomly placed blobs, clusters get outlined as they form, and a dashed line marks the pair about to be merged along with the distance that defines their linkage. On the right the dendrogram grows, one bracket per merge.</p>
+
+  <p>The line underneath names the two clusters being merged, the distance between them, and how many clusters currently exist.</p>
+
+  <h2>Cutting the tree</h2>
+  <p>A dendrogram is not yet a clustering. Slice it horizontally at some height and each branch crossing the line becomes one flat cluster, which is how \(k\) groups fall out of the tree. Drag the cut slider and the scatter plot recolors as you go.</p>
+
+  <h2>Things to try</h2>
+  <p>Run the same points through single linkage and then complete linkage, and watch the shape of the tree change. Push the point count down to 3 or up to 50. Slow the merge rate, or stop the animation and walk through it with the step button and the seek slider. "Restart flow" replays the algorithm on the same points; "New points" draws a fresh sample.</p>
+
+  <p>If you want to catch an inversion in the wild, switch to centroid linkage. It does not happen every time, so you may need a few fresh samples before the dendrogram doubles back on itself.</p>
+
 <div id="controls">
   <label>Points (n): <input type="number" id="in-n" min="3" max="50" step="1" value="18" style="width:52px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px; padding:3px 6px; font-family:monospace; font-size:12px;"></label>
   <label>Linkage:

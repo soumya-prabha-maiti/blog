@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Visualizations</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('post'));"></script>
+<link rel="stylesheet" href="../assets/blog.css">
+<script defer src="../assets/posts.js"></script>
+<script defer src="../assets/post-header.js"></script>
+</head>
+<body>
+<article id="post">
+  <p>Clustering starts from an awkward brief: here is a pile of unlabeled points, find the groups. Nobody tells the algorithm what a group is. Every clustering method has to invent its own answer, and the answer it picks decides which datasets it handles gracefully and which ones it butchers. That is why there is no single clustering algorithm, but four broad families, each built around a different idea of what a cluster looks like.</p>
+
+  <p>This post walks through all four: what each family assumes, the algorithm that made it famous, and the kind of data that makes it fail. Each family gets its own post with a live visualization; this one is the map.</p>
+
+  <h2>Centroid-based: a cluster is a point with followers</h2>
+  <p>Centroid-based clustering says a cluster is whatever gathers around a center. The <strong>centroid</strong> is the arithmetic mean of the points in a cluster, and <strong>k-means</strong>, the workhorse of the family, does nothing but chase it. You pick \(k\), the algorithm drops \(k\) centroids somewhere, then repeats two steps: assign every point to its nearest centroid, then move each centroid to the mean of the points it just collected. The two steps take turns until the centroids stop moving. What it minimizes is the total squared distance from each point to its center:</p>
+
+  \[\underset{C_1,\ldots,C_k}{\arg\min}\;\sum_{i=1}^{k}\,\sum_{x \in C_i} \lVert x - \mu_i \rVert^2\]
+
+  <p>The reason k-means is everywhere is scaling. Most clustering algorithms compare pairs of points, so their runtime grows as \(O(n^2)\), which is unusable at millions of examples. K-means only compares each point to \(k\) centroids, so it runs in \(O(n)\).</p>
+
+  <p>The price is baked into the definition. Nearest-centroid assignment carves space into flat-sided cells, so k-means expects blobs: roundish clusters of roughly equal size. It needs \(k\) handed to it upfront, a bad random start can wedge it in a poor answer, and because a mean is dragged by every point, a few outliers can pull a centroid well away from its cluster. Give it two concentric rings and it will slice the picture in half, because no placement of two centroids separates a ring from the ring inside it.</p>
+
+  <h2>Density-based: a cluster is a crowd</h2>
+  <p>Density-based clustering drops the idea of a center entirely. A cluster is a contiguous region where points are packed tightly, whatever shape that region takes. <strong>DBSCAN</strong> makes this concrete with two knobs: a radius \(\varepsilon\) and a count \(minPts\). A point with at least \(minPts\) neighbors within \(\varepsilon\) is a <em>core point</em>, and a cluster is what you get by starting at a core point and flowing outward through overlapping neighborhoods until the crowd thins out.</p>
+
+  <p>Two things fall out of this definition for free. The number of clusters is discovered, not chosen, and the clusters can be any shape at all, since the algorithm just follows density wherever it leads. The concentric rings that defeat k-means are effortless here: each ring is one connected crowd. Points that sit in sparse territory never join anything: they are labeled noise and left alone, which makes DBSCAN naturally robust to outliers.</p>
+
+  <p>The weak spot is the single global \(\varepsilon\). A dataset where one cluster is dense and another is diffuse has no radius that suits both: small \(\varepsilon\) shreds the sparse cluster into noise, large \(\varepsilon\) fuses the dense one with its surroundings. High-dimensional data is also unkind to it, because distances there stop distinguishing near from far.</p>
+
+  <h2>Distribution-based: a cluster is a probability distribution</h2>
+  <p>Distribution-based clustering assumes the data was <em>generated</em> by a handful of probability distributions, usually Gaussians, and tries to recover them. The model is a <strong>Gaussian mixture</strong>:</p>
+
+  \[p(x) = \sum_{i=1}^{k} \pi_i\, \mathcal{N}(x \mid \mu_i, \Sigma_i)\]
+
+  <p>Each component has a mean \(\mu_i\), a covariance \(\Sigma_i\), and a weight \(\pi_i\). The covariance is the interesting part: it lets a cluster stretch and tilt, so a Gaussian mixture handles elongated, ellipse-shaped clusters that k-means splits down the middle. Fitting is done with <strong>expectation-maximization</strong>, which looks a lot like k-means with the hard edges sanded off. The E-step computes, for every point, a probability of belonging to each component rather than a single hard assignment; the M-step refits each component to the points weighted by those probabilities. Membership fades gradually with distance from a component's center instead of switching at a boundary.</p>
+
+  <p>The catch is the assumption itself. If the data really does come from Gaussians, this is the principled choice. If it does not, the model will cheerfully fit ellipses to shapes that are not ellipses — a ring is not an ellipse, and no amount of EM will make it one. When you are not comfortable assuming a distribution, you are better served by a different family.</p>
+
+  <h2>Hierarchical: a cluster is a branch of a tree</h2>
+  <p>Hierarchical clustering refuses to pick one clustering at all. It builds a full tree of them, from every-point-alone at the leaves to everything-together at the root, and lets you cut the tree at whatever level suits you. Cut high and you get two coarse clusters; cut low and you get twenty fine ones. The tree is drawn as a <strong>dendrogram</strong>, and it is a natural fit for data that is genuinely nested, like biological taxonomies or genome similarity.</p>
+
+  <p>There are two ways to build the tree, and they run in opposite directions. <strong>Agglomerative</strong> clustering works bottom-up: start with every point as its own cluster, repeatedly merge the closest pair, stop when one cluster remains. <strong>Divisive</strong> clustering works top-down: start with everything in one cluster and recursively split. Agglomerative is what you will actually meet in practice, since it is simpler, its merge history reads clearly off the dendrogram, and it is what scikit-learn and SciPy ship; divisive is rarely implemented in mainstream libraries. Neither is cheap. Merging needs pairwise distances, which puts agglomerative at \(O(n^2)\) memory and up to \(O(n^3)\) time in the naive form, so this family stays practical only for datasets in the thousands.</p>
+
+  <p>"Closest pair of clusters" hides one more choice, the <em>linkage</em>: single linkage measures the gap between the two nearest members, complete linkage between the two farthest, average and Ward sit in between. Single linkage has a lovely property: it chains through any connected shape, so it can trace a ring the way DBSCAN does. There is a whole separate post on <a href="../hierarchical-clustering-dendrogram/">agglomerative clustering and its dendrogram</a> if you want to watch the tree itself grow.</p>
+
+  <h2>Choosing between them</h2>
+  <p>The families sort themselves out along a few questions. How big is the data? At millions of points only the \(O(n)\) family survives, which is why k-means is the default at scale and the pairwise methods stay in the thousands. What shape are the clusters? Round blobs suit k-means, tilted ellipses suit a Gaussian mixture, arbitrary connected shapes need density or single linkage. Are there outliers? Only DBSCAN has a built-in notion of noise; every other method forces each point into some cluster. Do you know how many clusters you want? K-means and Gaussian mixtures demand \(k\) upfront, DBSCAN discovers it, and hierarchical clustering defers the question entirely until you cut the tree.</p>
+
+  <p>None of these is the best clustering algorithm, because "cluster" is not one thing. Pick the definition of a group that matches how your data actually clumps, and the algorithm picks itself.</p>
+</article>
+</body>
+</html>
