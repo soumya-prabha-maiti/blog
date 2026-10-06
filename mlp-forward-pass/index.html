@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Visualizations</title>
+<link rel="stylesheet" href="../assets/blog.css">
+<script defer src="../assets/posts.js"></script>
+<script defer src="../assets/post-header.js"></script>
+<style>
+/* Post-specific. blog.css provides the base theme, article column and #controls. */
+#controls select {
+  background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px;
+  padding: 3px 6px; font-family: monospace; font-size: 12px;
+}
+#controls button[aria-pressed="true"] { background: #da3633; }
+#post canvas { position: static; display: block; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
+.mlp-top { display: flex; gap: 16px; align-items: flex-start; margin: 8px 0; }
+.pad-col { flex: 0 0 auto; text-align: center; }
+#pad { width: 256px; height: 256px; touch-action: none; cursor: crosshair; }
+.pad-caption { font-size: 11px; color: #8b949e; line-height: 1.8; }
+#detail { flex: 1 1 auto; min-width: 0; width: 100%; height: 256px; }
+#canvas-wrap { overflow: visible; min-height: 0; padding: 8px 0; }
+#c { width: 100%; }
+#prediction { font-size: 13px; color: #8b949e; }
+#prediction b { color: #3fb950; }
+@media (max-width: 640px) {
+  .mlp-top { flex-direction: column; align-items: center; }
+}
+</style>
+</head>
+<body>
+<article id="post">
+  <!-- writeup goes here -->
+
+<div id="controls">
+  <button id="btn-run">▶ Run forward pass</button>
+  <button id="btn-step">⏭ Step</button>
+  <button id="btn-instant">⚡ Instant</button>
+  <button id="btn-clear">✕ Clear</button>
+  <button id="btn-erase" aria-pressed="false">Eraser</button>
+  <label>Speed (neurons/s): <input type="range" id="sl-speed" min="1" max="30" value="6"><span id="v-speed">6</span></label>
+  <label>Tiles show:
+    <select id="sel-mode">
+      <option value="w">weights w</option>
+      <option value="xw">contribution x·w</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="cb-center" checked> Center by mass</label>
+  <label><input type="checkbox" id="cb-live"> Live</label>
+</div>
+<div class="mlp-top">
+  <div class="pad-col">
+    <canvas id="pad" role="img" aria-label="16 by 16 drawing grid. Drag to draw a digit; right-drag or use Eraser to erase."></canvas>
+    <div class="pad-caption">draw a digit · 16×16 · right-drag erases</div>
+  </div>
+  <canvas id="detail" role="img" aria-label="Step-by-step computation for the selected neuron"></canvas>
+</div>
+<div id="canvas-wrap"><canvas id="c" role="img" aria-label="Hidden layer receptive fields and output layer of the network"></canvas></div>
+<p id="prediction" aria-live="polite"></p>
+</article>
+
+<script src="weights.js"></script>
+<script>
+(function () {
+// ---------------------------------------------- Model
+const M = window.MLP_WEIGHTS;
+const predEl = document.getElementById('prediction');
+
+function validModel(m) {
+  if (!m || !m.W1 || !m.b1 || !m.W2 || !m.b2) return false;
+  const N = m.input_size, H = m.hidden_size, O = m.output_size;
+  const S = Math.round(Math.sqrt(N));
+  return S * S === N &&
+    m.W1.length === H && m.W1.every(r => r.length === N) && m.b1.length === H &&
+    m.W2.length === O && m.W2.every(r => r.length === H) && m.b2.length === O;
+}
+if (!validModel(M)) {
+  predEl.textContent = 'Could not load model weights: weights.js is missing or its shapes do not match.';
+  return;
+}
+
+const N = M.input_size, H = M.hidden_size, O = M.output_size;
+const S = Math.round(Math.sqrt(N));           // grid side, 16
+const W1 = M.W1, b1 = M.b1, W2 = M.W2, b2 = M.b2;
+const normMean = (M.input_norm && M.input_norm.mean) || 0;
+const normStd = (M.input_norm && M.input_norm.std) || 1;
+
+const grid = new Float32Array(N);  // what the user drew, 0..1
+const xs = new Float32Array(N);    // after centering, 0..1 (what gets displayed as x)
+const x = new Float32Array(N);     // after normalization (what layer 1 actually sees)
+const z1 = new Float32Array(H), h = new Float32Array(H);
+const z2 = new Float32Array(O), p = new Float32Array(O);
+let hMax = 1, s1xw = 1, s2xw = 1, pred = 0;
+
+function robustMax(values) {
+  const a = values.map(Math.abs).sort((u, v) => u - v);
+  return a[Math.floor(0.99 * (a.length - 1))] || 1;
+}
+const S1 = robustMax(W1.flat());
+const S2 = robustMax(W2.flat());
+const rowScale1 = W1.map(robustMax);
+
+// Shift the drawing so its centre of mass sits in the middle of the grid,
+// like MNIST preprocessing, then normalize the same way training did.
+function preprocess() {
+  let m = 0, cx = 0, cy = 0;
+  for (let r = 0; r < S; r++) for (let c = 0; c < S; c++) {
+    const v = grid[r * S + c]; m += v; cx += v * c; cy += v * r;
+  }
+  let dx = 0, dy = 0;
+  if (centerCb.checked && m > 0) {
+    dx = Math.round((S - 1) / 2 - cx / m);
+    dy = Math.round((S - 1) / 2 - cy / m);
+  }
+  xs.fill(0);
+  for (let r = 0; r < S; r++) for (let c = 0; c < S; c++) {
+    const sr = r - dy, sc = c - dx;
+    if (sr >= 0 && sr < S && sc >= 0 && sc < S) xs[r * S + c] = grid[sr * S + sc];
+  }
+  for (let i = 0; i < N; i++) x[i] = (xs[i] - normMean) / normStd;
+}
+
+// h = ReLU(W1 x + b1), z = W2 h + b2, p = softmax(z)
+function forward() {
+  s1xw = 0; hMax = 0;
+  for (let j = 0; j < H; j++) {
+    const row = W1[j];
+    let acc = b1[j];
+    for (let i = 0; i < N; i++) {
+      const c = row[i] * x[i];
+      acc += c;
+      if (Math.abs(c) > s1xw) s1xw = Math.abs(c);
+    }
+    z1[j] = acc;
+    h[j] = Math.max(0, acc);
+    if (h[j] > hMax) hMax = h[j];
+  }
+  s2xw = 0;
+  for (let k = 0; k < O; k++) {
+    const row = W2[k];
+    let acc = b2[k];
+    for (let j = 0; j < H; j++) {
+      const c = row[j] * h[j];
+      acc += c;
+      if (Math.abs(c) > s2xw) s2xw = Math.abs(c);
+    }
+    z2[k] = acc;
+  }
+  const zMax = Math.max(...z2);
+  let sum = 0;
+  for (let k = 0; k < O; k++) { p[k] = Math.exp(z2[k] - zMax); sum += p[k]; }
+  pred = 0;
+  for (let k = 0; k < O; k++) { p[k] /= sum; if (p[k] > p[pred]) pred = k; }
+  hMax = hMax || 1; s1xw = s1xw || 1; s2xw = s2xw || 1;
+}
+
+// ---------------------------------------------- Colours
+const BG = [13, 17, 23], POS = [240, 136, 62], NEG = [88, 166, 255], GRN = [74, 225, 104];
+function mix(c, a) {
+  return `rgb(${(BG[0] + (c[0] - BG[0]) * a) | 0},${(BG[1] + (c[1] - BG[1]) * a) | 0},${(BG[2] + (c[2] - BG[2]) * a) | 0})`;
+}
+function diverging(v, s) {         // orange = positive, blue = negative
+  const t = Math.max(-1, Math.min(1, v / s));
+  return mix(t >= 0 ? POS : NEG, Math.abs(t));
+}
+function gray(v) {
+  const g = (13 + 217 * Math.max(0, Math.min(1, v))) | 0;
+  return `rgb(${g},${g},${g})`;
+}
+function green(v) { return mix(GRN, Math.max(0, Math.min(1, v))); }
+
+function drawTile(g, x0, y0, size, colorAt) {
+  const cs = size / S, w = Math.ceil(cs);
+  for (let i = 0; i < N; i++) {
+    g.fillStyle = colorAt(i);
+    g.fillRect(x0 + (i % S) * cs, y0 + ((i / S) | 0) * cs, w, w);
+  }
+}
+function text(g, str, x0, y0, color = '#e6edf3', font = '12px monospace', align = 'left') {
+  g.fillStyle = color; g.font = font; g.textAlign = align; g.fillText(str, x0, y0);
+}
+
+// ---------------------------------------------- DOM + canvases
+const pad = document.getElementById('pad');
+const detail = document.getElementById('detail');
+const main = document.getElementById('c');
+const wrap = document.getElementById('canvas-wrap');
+const runBtn = document.getElementById('btn-run');
+const eraseBtn = document.getElementById('btn-erase');
+const speedSl = document.getElementById('sl-speed');
+const modeSel = document.getElementById('sel-mode');
+const centerCb = document.getElementById('cb-center');
+const liveCb = document.getElementById('cb-live');
+let padG, detailG, mainG, detailW = 0, mainW = 0;
+
+function setupCanvas(cv, cssW, cssH) {
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(cssW * dpr);
+  cv.height = Math.round(cssH * dpr);
+  cv.style.height = cssH + 'px';
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return g;
+}
+
+// ---------------------------------------------- Main canvas layout
+let L = null;
+function layout() {
+  mainW = wrap.clientWidth;
+  const padX = 16, gapX = 14, gapY = 10, labelH = 26;
+  const tile = H <= 32 ? 64 : H <= 64 ? 48 : 32;
+  const fit = Math.max(1, Math.floor((mainW - 2 * padX + gapX) / (tile + gapX)));
+  const rows = Math.ceil(H / fit);
+  const cols = Math.ceil(H / rows);           // balance rows: 32 -> 4 x 8, not 10/10/10/2
+  const gridW = cols * tile + (cols - 1) * gapX;
+  const gx = (mainW - gridW) / 2;
+  const tilesTop = 40;
+  const tiles = [];
+  for (let j = 0; j < H; j++) {
+    tiles.push({ x: gx + (j % cols) * (tile + gapX), y: tilesTop + Math.floor(j / cols) * (tile + labelH + gapY), s: tile });
+  }
+  const outHeader = tilesTop + rows * (tile + labelH + gapY) + 20;
+  const rowH = 24;
+  const labelW = 70;
+  const cellW = Math.max(2, Math.min(14, Math.floor((mainW * 0.45) / H)));
+  const stripX = padX + labelW;
+  const stripW = cellW * H;
+  const zX = stripX + stripW + 14;
+  const barX = zX + 86;
+  const barW = Math.max(40, mainW - padX - 60 - barX);
+  const hRowY = outHeader + 16;
+  const rowY = k => hRowY + rowH + 6 + k * rowH;
+  L = { padX, tile, tiles, outHeader, rowH, cellW, stripX, stripW, zX, barX, barW, hRowY, rowY };
+  mainG = setupCanvas(main, mainW, rowY(O) + 14);
+}
+
+function resizeAll() {
+  padG = setupCanvas(pad, 256, 256);
+  detailW = detail.clientWidth;
+  detailG = setupCanvas(detail, detailW, 256);
+  layout();
+  needsDraw = true;
+}
+
+// ---------------------------------------------- Animation state
+// Steps: H hidden neurons, then O output neurons, then softmax.
+const TOTAL = H + O + 1;
+let revealed = 0, playing = false, acc = 0, lastTime = 0;
+let hoverFocus = null, inputDirty = true, needsDraw = true;
+
+function animFocus() {
+  if (revealed === 0) return null;
+  const idx = revealed - 1;
+  if (idx < H) return { type: 'hidden', j: idx };
+  if (idx < H + O) return { type: 'output', k: idx - H };
+  return { type: 'softmax' };
+}
+const softmaxShown = () => revealed >= TOTAL;
+
+// ---------------------------------------------- Draw: pad
+function drawPad() {
+  const g = padG, cs = 256 / S;
+  g.fillStyle = '#0d1117'; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < N; i++) {
+    if (grid[i] <= 0) continue;
+    g.fillStyle = gray(grid[i]);
+    g.fillRect((i % S) * cs, ((i / S) | 0) * cs, cs, cs);
+  }
+  g.strokeStyle = 'rgba(255,255,255,0.06)'; g.lineWidth = 1;
+  g.beginPath();
+  for (let k = 1; k < S; k++) {
+    g.moveTo(k * cs + 0.5, 0); g.lineTo(k * cs + 0.5, 256);
+    g.moveTo(0, k * cs + 0.5); g.lineTo(256, k * cs + 0.5);
+  }
+  g.stroke();
+}
+
+// ---------------------------------------------- Draw: main canvas
+function drawMain() {
+  const g = mainG, mode = modeSel.value;
+  const focus = hoverFocus || animFocus();
+  g.clearRect(0, 0, mainW, main.height);
+
+  text(g, `Hidden layer · h = ReLU(W₁x + b₁) · ${H} neurons, each tile is one row of W₁ (${S}×${S})`, L.padX, 22, '#8b949e');
+
+  for (let j = 0; j < H; j++) {
+    const t = L.tiles[j], done = revealed > j;
+    const useXW = mode === 'xw' && done;
+    g.globalAlpha = !done ? 0.3 : (h[j] > 0 ? 1 : 0.35);
+    drawTile(g, t.x, t.y, t.s, useXW ? i => diverging(W1[j][i] * x[i], s1xw) : i => diverging(W1[j][i], S1));
+    g.globalAlpha = 1;
+
+    const strength = done ? h[j] / hMax : 0;
+    if (focus && focus.type === 'hidden' && focus.j === j) { g.strokeStyle = '#e6edf3'; g.lineWidth = 2; }
+    else if (strength > 0) { g.strokeStyle = `rgba(74,225,104,${0.3 + 0.7 * strength})`; g.lineWidth = 1 + 2 * strength; }
+    else { g.strokeStyle = '#30363d'; g.lineWidth = 1; }
+    g.strokeRect(t.x - 1, t.y - 1, t.s + 2, t.s + 2);
+
+    g.fillStyle = 'rgba(255,255,255,0.06)'; g.fillRect(t.x, t.y + t.s + 5, t.s, 4);
+    if (done) { g.fillStyle = '#4ae168'; g.fillRect(t.x, t.y + t.s + 5, t.s * strength, 4); }
+    text(g, done ? h[j].toFixed(2) : `h${j}`, t.x + t.s / 2, t.y + t.s + 21, done && h[j] > 0 ? '#e6edf3' : '#6e7681', '10px monospace', 'center');
+  }
+
+  // Output layer
+  text(g, 'Output layer · z = W₂h + b₂ · p = softmax(z) · each strip is one row of W₂', L.padX, L.outHeader, '#8b949e');
+  const hidDone = Math.min(revealed, H);
+  text(g, 'h', L.stripX - 12, L.hRowY + 15, '#8b949e', '12px monospace', 'right');
+  for (let j = 0; j < H; j++) {
+    g.fillStyle = j < hidDone ? green(h[j] / hMax) : '#161b22';
+    g.fillRect(L.stripX + j * L.cellW, L.hRowY + 2, L.cellW - (L.cellW > 4 ? 1 : 0), 18);
+  }
+  text(g, 'z', L.zX, L.hRowY + 15, '#8b949e');
+  text(g, 'p', L.barX, L.hRowY + 15, '#8b949e');
+
+  for (let k = 0; k < O; k++) {
+    const y = L.rowY(k), done = revealed > H + k, win = softmaxShown() && k === pred;
+    if (win) { g.fillStyle = 'rgba(35,134,54,0.18)'; g.fillRect(L.padX, y - 2, mainW - 2 * L.padX, L.rowH - 2); }
+    text(g, String(k), L.stripX - 12, y + 15, win ? '#3fb950' : '#e6edf3', 'bold 13px monospace', 'right');
+
+    const useXW = mode === 'xw' && done;
+    g.globalAlpha = done ? 1 : 0.3;
+    for (let j = 0; j < H; j++) {
+      g.fillStyle = useXW ? diverging(W2[k][j] * h[j], s2xw) : diverging(W2[k][j], S2);
+      g.fillRect(L.stripX + j * L.cellW, y + 1, L.cellW - (L.cellW > 4 ? 1 : 0), L.rowH - 6);
+    }
+    g.globalAlpha = 1;
+    if (focus && focus.type === 'output' && focus.k === k) {
+      g.strokeStyle = '#e6edf3'; g.lineWidth = 2;
+      g.strokeRect(L.stripX - 2, y - 1, L.stripW + 3, L.rowH - 2);
+    }
+    if (done) text(g, (z2[k] >= 0 ? ' ' : '') + z2[k].toFixed(2), L.zX, y + 15, '#e6edf3');
+
+    g.fillStyle = 'rgba(255,255,255,0.06)'; g.fillRect(L.barX, y + 4, L.barW, L.rowH - 12);
+    if (softmaxShown()) {
+      g.fillStyle = win ? '#238636' : 'rgba(88,166,255,0.7)';
+      g.fillRect(L.barX, y + 4, L.barW * p[k], L.rowH - 12);
+      text(g, (p[k] * 100).toFixed(1) + '%', L.barX + L.barW + 8, y + 15, win ? '#3fb950' : '#8b949e', '11px monospace');
+    }
+  }
+}
+
+// ---------------------------------------------- Draw: detail panel
+function drawDetail() {
+  const g = detailG, W = detailW, focus = hoverFocus || animFocus();
+  g.clearRect(0, 0, W, 256);
+  if (!focus) {
+    text(g, 'Draw a digit on the grid, then press ▶ Run forward pass.', 16, 40, '#e6edf3');
+    text(g, 'Step walks one neuron at a time. Hover any computed', 16, 72, '#8b949e');
+    text(g, 'neuron below to inspect it here.', 16, 92, '#8b949e');
+    return;
+  }
+  if (focus.type === 'hidden') return detailHidden(g, W, focus.j);
+  if (focus.type === 'output') return detailOutput(g, W, focus.k);
+  return detailSoftmax(g, W);
+}
+
+function detailHidden(g, W, j) {
+  const gap = 40, T = Math.max(48, Math.min(128, Math.floor((W - 32 - 2 * gap) / 3)));
+  const top = 34, x0 = 16, row = W1[j];
+  let pMax = 0, sum = 0;
+  for (let i = 0; i < N; i++) { const c = row[i] * x[i]; sum += c; pMax = Math.max(pMax, Math.abs(c)); }
+  pMax = pMax || 1;
+  const xs1 = x0 + T + gap, xs2 = xs1 + T + gap;
+
+  text(g, 'x  input', x0, 22, '#8b949e');
+  text(g, `W₁[${j}]  weights`, xs1, 22, '#8b949e');
+  text(g, `x ⊙ W₁[${j}]`, xs2, 22, '#8b949e');
+  drawTile(g, x0, top, T, i => gray(xs[i]));
+  drawTile(g, xs1, top, T, i => diverging(row[i], rowScale1[j]));
+  drawTile(g, xs2, top, T, i => diverging(row[i] * x[i], pMax));
+  g.strokeStyle = '#30363d'; g.lineWidth = 1;
+  [x0, xs1, xs2].forEach(px => g.strokeRect(px - 0.5, top - 0.5, T + 1, T + 1));
+  text(g, '⊙', x0 + T + gap / 2, top + T / 2 + 7, '#e6edf3', '20px monospace', 'center');
+  text(g, '=', xs1 + T + gap / 2, top + T / 2 + 7, '#e6edf3', '20px monospace', 'center');
+
+  const y = top + T + 26, fires = h[j] > 0;
+  text(g, `neuron ${j}:  Σ xᵢwᵢ = ${sum.toFixed(3)}   + b = ${b1[j].toFixed(3)}   → z = ${z1[j].toFixed(3)}`, x0, y);
+  text(g, fires ? `ReLU(z) = ${h[j].toFixed(3)}  → fires` : 'ReLU(z) = 0  → silent for this input',
+    x0, y + 22, fires ? '#4ae168' : '#8b949e');
+  text(g, 'orange pixels push z up, blue pixels push it down', x0, y + 44, '#6e7681', '11px monospace');
+}
+
+function detailOutput(g, W, k) {
+  const labelW = 110, x0 = 16, stripX = x0 + labelW;
+  const cw = Math.max(2, Math.min(16, Math.floor((W - stripX - 16) / H)));
+  const row = W2[k];
+  let pMax = 0, sum = 0;
+  for (let j = 0; j < H; j++) { const c = row[j] * h[j]; sum += c; pMax = Math.max(pMax, Math.abs(c)); }
+  pMax = pMax || 1;
+  const wMax = robustMax(row);
+
+  text(g, `output neuron ${k} · the logit for digit "${k}"`, x0, 22, '#8b949e');
+  const strips = [
+    ['h', j => green(h[j] / hMax)],
+    [`W₂[${k}]`, j => diverging(row[j], wMax)],
+    [`h ⊙ W₂[${k}]`, j => diverging(row[j] * h[j], pMax)],
+  ];
+  strips.forEach(([label, colorAt], r) => {
+    const y = 44 + r * 40;
+    text(g, label, x0, y + 15, '#e6edf3');
+    for (let j = 0; j < H; j++) {
+      g.fillStyle = colorAt(j);
+      g.fillRect(stripX + j * cw, y, cw - (cw > 4 ? 1 : 0), 22);
+    }
+  });
+
+  const y = 44 + 3 * 40 + 14;
+  text(g, `z${k} = Σ hⱼwⱼ + b = ${sum.toFixed(3)} + ${b2[k].toFixed(3)} = ${z2[k].toFixed(3)}`, x0, y);
+  text(g, 'a raw score; softmax turns all 10 scores into probabilities', x0, y + 22, '#6e7681', '11px monospace');
+}
+
+function detailSoftmax(g, W) {
+  const x0 = 16;
+  text(g, 'softmax:  pₖ = e^zₖ / Σⱼ e^zⱼ', x0, 26, '#8b949e');
+  const zMax = Math.max(...z2);
+  let sum = 0;
+  for (let k = 0; k < O; k++) sum += Math.exp(z2[k] - zMax);
+  text(g, `subtract max(z) = ${zMax.toFixed(2)} for stability:  Σⱼ e^(zⱼ − max) = ${sum.toFixed(3)}`, x0, 54, '#e6edf3', '11px monospace');
+  const order = [...Array(O).keys()].sort((a, b) => p[b] - p[a]).slice(0, 3);
+  order.forEach((k, r) => {
+    text(g, `p${k} = e^(${(z2[k] - zMax).toFixed(2)}) / ${sum.toFixed(3)} = ${(p[k] * 100).toFixed(1)}%`,
+      x0, 86 + r * 22, r === 0 ? '#3fb950' : '#e6edf3');
+  });
+  text(g, 'prediction', x0, 176, '#8b949e');
+  text(g, String(pred), x0, 226, '#3fb950', 'bold 44px monospace');
+  text(g, `${(p[pred] * 100).toFixed(1)}% confident`, x0 + 48, 222, '#8b949e');
+}
+
+// ---------------------------------------------- Prediction line (screen readers)
+let lastPredText = null;
+function updatePrediction() {
+  let s;
+  if (softmaxShown()) s = `Prediction: <b>${pred}</b> (${(p[pred] * 100).toFixed(1)}% confidence)`;
+  else if (revealed > 0) s = `Forward pass: step ${revealed} of ${TOTAL}`;
+  else s = 'Draw a digit, then press ▶ Run forward pass.';
+  if (s !== lastPredText) { predEl.innerHTML = s; lastPredText = s; }
+}
+
+function updateRunButton() {
+  runBtn.textContent = playing ? '⏸ Pause' : (revealed > 0 && revealed < TOTAL ? '▶ Resume' : '▶ Run forward pass');
+}
+
+// ---------------------------------------------- Drawing input
+let drawing = false, erasing = false, last = null;
+function cellPoint(e) {
+  const r = pad.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * S, y: (e.clientY - r.top) / r.height * S };
+}
+// Soft round brush, roughly the stroke width of a downsampled MNIST digit.
+function stamp(pt) {
+  const c0 = Math.floor(pt.x), r0 = Math.floor(pt.y);
+  for (let r = r0 - 2; r <= r0 + 2; r++) for (let c = c0 - 2; c <= c0 + 2; c++) {
+    if (r < 0 || r >= S || c < 0 || c >= S) continue;
+    const d = Math.hypot(c + 0.5 - pt.x, r + 0.5 - pt.y);
+    const i = r * S + c;
+    if (erasing) {
+      const v = Math.max(0, Math.min(1, 1.6 - 0.8 * d));
+      grid[i] = Math.min(grid[i], 1 - v);
+    } else {
+      const v = Math.max(0, Math.min(1, 1.25 - 0.85 * d));
+      grid[i] = Math.max(grid[i], v);
+    }
+  }
+}
+function strokeTo(pt) {
+  const steps = Math.max(1, Math.ceil(Math.hypot(pt.x - last.x, pt.y - last.y) / 0.25));
+  for (let s = 1; s <= steps; s++) {
+    stamp({ x: last.x + (pt.x - last.x) * s / steps, y: last.y + (pt.y - last.y) * s / steps });
+  }
+  last = pt;
+}
+
+pad.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  drawing = true;
+  erasing = eraseBtn.getAttribute('aria-pressed') === 'true' || e.button === 2;
+  pad.setPointerCapture(e.pointerId);
+  last = cellPoint(e);
+  stamp(last);
+  inputDirty = true;
+});
+pad.addEventListener('pointermove', e => {
+  if (!drawing) return;
+  strokeTo(cellPoint(e));
+  inputDirty = true;
+});
+['pointerup', 'pointercancel'].forEach(ev => pad.addEventListener(ev, () => { drawing = false; }));
+pad.addEventListener('contextmenu', e => e.preventDefault());
+
+// ---------------------------------------------- Hover inspection
+main.addEventListener('mousemove', e => {
+  const r = main.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  let f = null;
+  for (let j = 0; j < H && j < revealed; j++) {
+    const t = L.tiles[j];
+    if (mx >= t.x && mx <= t.x + t.s && my >= t.y && my <= t.y + t.s + 24) { f = { type: 'hidden', j }; break; }
+  }
+  if (!f) for (let k = 0; k < O && H + k < revealed; k++) {
+    const y = L.rowY(k);
+    if (my >= y - 2 && my < y - 2 + L.rowH && mx >= L.padX && mx <= mainW - L.padX) { f = { type: 'output', k }; break; }
+  }
+  if (JSON.stringify(f) !== JSON.stringify(hoverFocus)) { hoverFocus = f; needsDraw = true; }
+});
+main.addEventListener('mouseleave', () => { hoverFocus = null; needsDraw = true; });
+
+// ---------------------------------------------- Controls
+runBtn.addEventListener('click', () => {
+  if (playing) playing = false;
+  else {
+    if (revealed >= TOTAL) revealed = 0;
+    playing = true; acc = 0;
+  }
+  needsDraw = true;
+});
+document.getElementById('btn-step').addEventListener('click', () => {
+  playing = false;
+  if (revealed >= TOTAL) revealed = 0;
+  revealed++;
+  needsDraw = true;
+});
+document.getElementById('btn-instant').addEventListener('click', () => {
+  playing = false; revealed = TOTAL; needsDraw = true;
+});
+document.getElementById('btn-clear').addEventListener('click', () => {
+  grid.fill(0); inputDirty = true;
+});
+eraseBtn.addEventListener('click', () => {
+  const on = eraseBtn.getAttribute('aria-pressed') !== 'true';
+  eraseBtn.setAttribute('aria-pressed', String(on));
+  eraseBtn.textContent = on ? 'Eraser: on' : 'Eraser';
+});
+speedSl.addEventListener('input', () => { document.getElementById('v-speed').textContent = speedSl.value; });
+modeSel.addEventListener('change', () => { needsDraw = true; });
+centerCb.addEventListener('change', () => { inputDirty = true; });
+liveCb.addEventListener('change', () => { if (liveCb.checked) { playing = false; revealed = TOTAL; } needsDraw = true; });
+window.addEventListener('resize', resizeAll);
+
+// ---------------------------------------------- Loop
+function tick(time) {
+  if (inputDirty) {
+    preprocess();
+    forward();
+    // A new input invalidates the animation: show it instantly in live mode,
+    // otherwise go back to the "nothing computed yet" state.
+    if (liveCb.checked) { playing = false; revealed = TOTAL; }
+    else if (revealed > 0 || playing) { playing = false; revealed = 0; }
+    inputDirty = false;
+    needsDraw = true;
+  }
+  if (playing) {
+    acc += (lastTime ? (time - lastTime) / 1000 : 0) * +speedSl.value;
+    while (acc >= 1 && revealed < TOTAL) { revealed++; acc -= 1; needsDraw = true; }
+    if (revealed >= TOTAL) { playing = false; needsDraw = true; }
+  }
+  lastTime = time;
+  if (needsDraw) {
+    drawPad(); drawMain(); drawDetail();
+    updatePrediction(); updateRunButton();
+    needsDraw = false;
+  }
+  requestAnimationFrame(tick);
+}
+
+resizeAll();
+requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

@@ -9,6 +9,13 @@
    Plain script rather than JSON so it also works over file:// */
 window.POSTS = [
   {
+    slug: 'mlp-forward-pass',
+    title: 'Inside a Neural Network: The Forward Pass',
+    blurb: 'Draw a digit and watch a one-hidden-layer network turn 256 pixels into a prediction, one neuron at a time.',
+    date: '2026-10-05',
+    tags: ['neural-networks', 'inference']
+  },
+  {
     slug: 'types-of-clustering',
     title: 'The Four Families of Clustering',
     blurb: 'Centroid, density, distribution and hierarchical clustering: what each family assumes, where it shines, and the data that breaks it.',
