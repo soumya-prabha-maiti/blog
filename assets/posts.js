@@ -9,6 +9,13 @@
    Plain script rather than JSON so it also works over file:// */
 window.POSTS = [
   {
+    slug: 'mlp-forward-pass',
+    title: 'Inside a Neural Network: The Forward Pass',
+    blurb: 'Draw a digit and watch a one-hidden-layer network turn 256 pixels into a prediction, one neuron at a time.',
+    date: '2026-10-05',
+    tags: ['neural-networks', 'inference']
+  },
+  {
     slug: 'sinusoidal-positional-encoding-transformers',
     title: 'Sinusoidal Positional Encoding: Giving Transformers a Sense of Order',
     blurb: 'How sine and cosine waves of different frequencies give a transformer a sense of word order, shown as rotating phasors.',
