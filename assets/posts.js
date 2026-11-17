@@ -21,5 +21,12 @@ window.POSTS = [
     blurb: 'How sine and cosine waves of different frequencies give a transformer a sense of word order, shown as rotating phasors.',
     date: '2026-05-31',
     tags: ['transformers', 'positional-encoding']
+  },
+  {
+    slug: 'attention-in-transformers',
+    title: 'Transformer Attention',
+    blurb: 'Queries, keys and values combining into attention weights across a sentence.',
+    date: '2026-06-02',
+    tags: ['transformers', 'attention']
   }
 ];

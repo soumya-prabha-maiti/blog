@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Visualizations</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.getElementById('post'));"></script>
+<link rel="stylesheet" href="../assets/blog.css">
+<script defer src="../assets/posts.js"></script>
+<script defer src="../assets/post-header.js"></script>
+<style>
+/* Post-specific. blog.css provides the base theme, article column and #controls. */
+body { padding-bottom: 40px; }
+#controls select { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+.section { margin: 12px 0; }
+.section-title { font-size: 13px; color: #8b949e; margin-bottom: 8px; }
+canvas { position: static; max-width: 100%; background: #161b22; border: 1px solid #30363d; border-radius: 10px; }
+.container { display: flex; justify-content: center; }
+.info { text-align: center; margin-top: 8px; font-size: 11px; color: #8b949e; }
+#qkv-section { overflow-x: auto; }
+#qkv-table { border-collapse: collapse; font-size: 11px; width: 100%; background: #161b22; border: 1px solid #30363d; border-radius: 10px; }
+#qkv-table th, #qkv-table td { padding: 6px 10px; border: 1px solid #30363d; text-align: center; }
+#qkv-table th { background: #0d1117; color: #8b949e; }
+.vec-q { color: #58a6ff; }
+.vec-k { color: #f0883e; }
+.vec-v { color: #7ee787; }
+.matrices-wrap { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
+.matrix-block { text-align: center; overflow-x: auto; }
+.matrix-label { font-size: 12px; color: #8b949e; margin-bottom: 6px; }
+.matrix-table { border-collapse: collapse; font-size: 11px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; }
+.matrix-table th, .matrix-table td { padding: 5px 8px; border: 1px solid #30363d; text-align: center; min-width: 50px; }
+.matrix-table th { background: #0d1117; color: #8b949e; }
+.matrix-table td { color: #e6edf3; }
+#anim-controls { background: #161b22; padding: 10px 20px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; border: 1px solid #30363d; border-radius: 10px; margin: 10px 0; }
+#anim-controls label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+#anim-controls button { background: #238636; border: none; color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 12px; }
+#anim-controls button:hover { background: #2ea043; }
+#anim-controls select { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+#anim-controls span { min-width: 34px; text-align: right; }
+#controls + #anim-controls { margin-top: 2px; }
+#anim { width: 100%; height: auto; display: block; }
+#anim-stage { margin-top: 12px; font-size: 13px; color: #f0f6fc; }
+#anim-caption { font-size: 13px; color: #8b949e; line-height: 1.75; margin-top: 4px; min-height: 48px; }
+#post a { color: #58a6ff; }
+#post code { font-family: monospace; font-size: 0.95em; color: #79c0ff; }
+#post table.roles { border-collapse: collapse; margin-top: 14px; font-size: 13px; width: 100%; }
+#post table.roles th, #post table.roles td { border: 1px solid #30363d; padding: 7px 10px; text-align: left; line-height: 1.6; }
+</style>
+</head>
+<body>
+<article id="post">
+  <p>A transformer layer has to let every token in a sentence read from every other token. Attention is how that happens. Each token poses a question about what it needs, every token advertises what it holds, and the answer is a weighted average over the whole sentence. There is no recurrence and no convolution. The only thing connecting one position to another is a matrix of weights the model recomputes for every input.</p>
+
+  <p>The whole thing fits on one line, \(\mathrm{softmax}(QK^\top/\sqrt{d_k})V\), and the two widgets below run it end to end on a short sentence: \(d_{model} = 32\) split across 8 heads, so \(d_k = d_v = 4\) inside each head. The first walks a single token through the computation; the second shows the finished weights for every token at once. One caveat before you read anything into either: the Q, K and V vectors here are drawn at random rather than learned, so which word attends to which carries no linguistic meaning. The mechanics are faithful; the pattern is noise. Everything below the widgets explains the pieces.</p>
+
+  <h2>One token, step by step</h2>
+  <p>This follows one token through the whole pipeline: project it to a query, dot that against every key, scale, normalise, then mix the value vectors in those proportions. The first bar picks the sentence and the head and feeds both widgets on this page; the second controls playback.</p>
+
+<div id="controls">
+  <label>Sentence: <select id="sentenceSelect">
+    <option value="0">The cat sat on the mat</option>
+    <option value="1">I love natural language processing</option>
+    <option value="2">Attention is all you need</option>
+  </select></label>
+  <label>Head: <select id="headSelect"></select></label>
+  <button id="randomize">↺ Randomize</button>
+</div>
+
+<div id="anim-controls">
+  <label>Query token: <select id="anim-query"></select></label>
+  <button id="anim-play">▶ Play</button>
+  <button id="anim-prev">⏮ Prev</button>
+  <button id="anim-next">⏭ Next</button>
+  <label>Speed: <input type="range" id="anim-speed" min="0.25" max="2.5" step="0.25" value="1"><span id="anim-speed-v">1.0×</span></label>
+  <label>Scrub: <input type="range" id="anim-seek" min="0" max="100" step="1" value="0" style="width:170px"></label>
+</div>
+<canvas id="anim"></canvas>
+<div id="anim-stage"></div>
+<div id="anim-caption"></div>
+
+  <h2>Every weight at once</h2>
+  <p>That walkthrough traced one row of the attention matrix. Every other token has a row of its own, computed the same way and at the same time, and this is all of them together for the sentence and head selected above.</p>
+
+<div class="section">
+  <div class="container"><canvas id="canvas"></canvas></div>
+  <div class="info">Line opacity = attention weight · Hover tokens to highlight</div>
+</div>
+
+  <p>The sentence appears twice, as queries on the left and keys on the right, because attention relates a sentence to itself. Each curve is one attention weight, drawn thicker and brighter the larger it is. Hover a token on the left to isolate its row, the full set of weights it uses to build its output, or hover on the right to get the column instead: everyone reading from that token.</p>
+
+  <p>Underneath are the numbers behind those curves: the per-token Q, K and V vectors for the selected head, then the score matrix before and after softmax.</p>
+
+<div class="section">
+  <div class="section-title">Q, K, V Vectors (per head)</div>
+  <div id="qkv-section"></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Attention Matrices</div>
+  <div class="matrices-wrap">
+    <div class="matrix-block"><div class="matrix-label">Raw Scores (QK<sup>T</sup>/√d_k)</div><div id="matrix-raw"></div></div>
+    <div class="matrix-block"><div class="matrix-label">After Softmax</div><div id="matrix-soft"></div></div>
+  </div>
+</div>
+
+  <h2>Queries, keys and values</h2>
+  <p>Start from a sequence of embeddings \(X \in \mathbb{R}^{n \times d_{model}}\) and three learned projections of it:</p>
+
+  \[Q = XW^Q, \qquad K = XW^K, \qquad V = XW^V\]
+
+  <p>Same input, three different views. The names come from a database lookup, where you match a query against keys and retrieve the value that matches:</p>
+
+  <table class="roles">
+    <tr><th>Vector</th><th>Belongs to</th><th>What it encodes</th></tr>
+    <tr><td><strong>query</strong> \(q_i\)</td><td>the token doing the reading</td><td>what this token is looking for elsewhere in the sentence</td></tr>
+    <tr><td><strong>key</strong> \(k_j\)</td><td>the token being read</td><td>what this token offers, used only for matching</td></tr>
+    <tr><td><strong>value</strong> \(v_j\)</td><td>the token being read</td><td>the content actually handed over once it has been matched</td></tr>
+  </table>
+
+  <p>The difference from a database is that attention never picks a single match. It matches softly against every position at once and blends the results. Keeping keys separate from values is what makes that blend useful: a token can be easy to find for reasons that have nothing to do with the information it passes on. Those are the three vectors in the Q, K, V table above, four numbers each because \(d_k = d_v = 4\) in this head.</p>
+
+  <h2>Scoring, and why the scores get divided</h2>
+  <p>Similarity is a dot product, so all \(n^2\) comparisons are one matrix multiply:</p>
+
+  \[S = \frac{QK^\top}{\sqrt{d_k}}, \qquad s_{ij} = \frac{q_i \cdot k_j}{\sqrt{d_k}}\]
+
+  <p>Entry \((i,j)\) says how strongly token \(i\) wants to read from token \(j\). That is the left-hand matrix above, and it is small enough to check by hand: take any token's Q row from the vector table, any token's K row, dot them, divide by \(\sqrt{4} = 2\). The result is \(n \times n\), which is where the quadratic cost in sequence length comes from, and most of the long-context literature is about avoiding ever materializing it in full.</p>
+
+  <p>Read it by row, never by column, and notice it is not symmetric. A token can attend heavily to a neighbor that pays it no attention back, since \(q_i \cdot k_j\) and \(q_j \cdot k_i\) are different numbers computed from different projections.</p>
+
+  <p>The \(\sqrt{d_k}\) needs justifying. If the components of \(q\) and \(k\) are independent with mean 0 and variance 1, then their dot product sums \(d_k\) such products and has variance \(d_k\). Raw scores therefore spread out as the head gets wider, and a wide spread drives softmax into a near one-hot corner where the largest score takes almost all the weight and the gradient through the others goes flat. Dividing by \(\sqrt{d_k}\) returns the variance to 1 and keeps the distribution in a range where it can still be trained.</p>
+
+  <h2>Softmax turns scores into a mixture</h2>
+  <p>Softmax is applied along each row:</p>
+
+  \[A = \mathrm{softmax}(S), \qquad a_{ij} = \frac{e^{s_{ij}}}{\sum_{j'} e^{s_{ij'}}}\]
+
+  <p>So every row sums to 1 and row \(i\) is a recipe for rebuilding token \(i\) as a convex combination of value vectors:</p>
+
+  \[\mathrm{Attention}(Q,K,V) = \mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V\]
+
+  <p>That is the right-hand matrix above: the same information as the left one, now non-negative with every row summing to 1. Columns sum to nothing in particular, which is why a column is a question about demand for a token rather than a distribution over anything.</p>
+
+  <p>Note which vectors those weights multiply. Q and K only ever decide <em>how much</em>, by producing the scores; V decides <em>what</em> actually travels. A token can score high on everyone's query and still contribute little content if its value vector is small, and the two jobs are learned by separate matrices precisely so they can disagree.</p>
+
+  <p>Exponentiation also exaggerates. A score gap of 2 in the left matrix becomes a weight ratio of \(e^2 \approx 7.4\) on the right, so softmax sharpens an ordering that already existed in the raw scores. That amplification is the reason the \(\sqrt{d_k}\) division matters as much as it does.</p>
+
+  <h2>Eight heads instead of one</h2>
+  <p>A single attention pattern per layer is a bottleneck, because one distribution per token has to serve every kind of relationship at once. Multi-head attention splits \(d_{model}\) into \(h\) slices of width \(d_k = d_{model}/h\), gives each slice its own \(W^Q, W^K, W^V\), and runs the same computation independently in each:</p>
+
+  \[\mathrm{MultiHead}(X) = \mathrm{Concat}(\mathrm{head}_1, \dots, \mathrm{head}_h)\,W^O\]
+
+  <p>Because the slices are narrower, the total cost stays close to a single head at full width, and the concatenated outputs get mixed back together by \(W^O\). In a trained model the heads end up doing visibly different jobs, with some tracking the previous token, some following syntactic dependencies, some doing very little at all and prunable without much loss. Switching heads in the widget only resamples random vectors, but it does show the structural point: eight independent \(n \times n\) patterns over the same sentence, computed in parallel.</p>
+
+  <h2>What this leaves out</h2>
+  <p>The widget shows encoder-style self-attention, where every token may read from every other. A decoder adds a causal mask, setting the upper triangle of \(S\) to \(-\infty\) before softmax so position \(i\) sees nothing after itself, which is what makes next-token training possible in one pass. Cross-attention changes the sourcing instead, taking \(Q\) from one sequence and \(K, V\) from another.</p>
+
+  <p>The larger omission is position. Attention as written is permutation-equivariant: shuffle the input tokens and the rows and columns of \(A\) shuffle with them, leaving every weight otherwise unchanged. The mechanism genuinely cannot tell "the cat sat" from "sat the cat", so word order has to be injected separately, either added to the embeddings as <a href="../sinusoidal-positional-encoding-transformers/index.html">sinusoidal positional encoding</a> or applied inside the attention computation as <a href="../rope-positional-encoding/index.html">rotary embeddings</a>.</p>
+
+</article>
+<script>
+const sentences = [
+  ["The", "cat", "sat", "on", "the", "mat"],
+  ["I", "love", "natural", "language", "processing"],
+  ["Attention", "is", "all", "you", "need"]
+];
+const numHeads = 8, dModel = 32, dK = 4;
+let data = {}; // cached per sentence+head
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let hoveredIdx = -1, hoveredSide = null;
+
+function softmax(arr) {
+  const max = Math.max(...arr);
+  const exps = arr.map(x => Math.exp(x - max));
+  const sum = exps.reduce((a, b) => a + b);
+  return exps.map(x => x / sum);
+}
+
+function randVec(len) { return Array.from({length: len}, () => (Math.random() * 2 - 1)); }
+
+function generateData(tokens, head) {
+  const key = `${tokens.join(',')}_${head}`;
+  if (!data[key]) {
+    const n = tokens.length;
+    const Q = [], K = [], V = [];
+    for (let i = 0; i < n; i++) { Q.push(randVec(dK)); K.push(randVec(dK)); V.push(randVec(dK)); }
+    // raw scores: QK^T / sqrt(dK)
+    const rawScores = [], softScores = [];
+    const scale = Math.sqrt(dK);
+    for (let i = 0; i < n; i++) {
+      const row = [];
+      for (let j = 0; j < n; j++) {
+        let dot = 0;
+        for (let d = 0; d < dK; d++) dot += Q[i][d] * K[j][d];
+        row.push(dot / scale);
+      }
+      rawScores.push(row);
+      softScores.push(softmax(row));
+    }
+    data[key] = { Q, K, V, rawScores, softScores };
+  }
+  return data[key];
+}
+
+function getTokens() { return sentences[document.getElementById('sentenceSelect').value]; }
+function getHead() { return parseInt(document.getElementById('headSelect').value); }
+
+function drawBipartite() {
+  const tokens = getTokens();
+  const head = getHead();
+  const { softScores } = generateData(tokens, head);
+  const n = tokens.length;
+  const tokenH = 36, gap = 12, padX = 160, padY = 60;
+  const totalH = n * (tokenH + gap) - gap;
+  const midGap = 300;
+  canvas.width = padX * 2 + midGap + 200;
+  canvas.height = totalH + padY * 2;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const leftX = padX, rightX = padX + midGap + 100;
+  const positions = [];
+  for (let i = 0; i < n; i++) positions.push(padY + i * (tokenH + gap) + tokenH / 2);
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const w = softScores[i][j];
+      if (w < 0.01) continue;
+      // Exaggerate differences: remap to [0,1] relative to row min/max, then power curve
+      const rowMin = Math.min(...softScores[i]), rowMax = Math.max(...softScores[i]);
+      const norm = rowMax > rowMin ? Math.pow((w - rowMin) / (rowMax - rowMin), 0.5) : 0.5;
+      const vis = 0.05 + norm * 0.95;
+      const relevant = hoveredIdx === -1 || (hoveredSide === 'left' && i === hoveredIdx) || (hoveredSide === 'right' && j === hoveredIdx);
+      if (!relevant) continue;
+      const alpha = vis;
+      ctx.strokeStyle = head < 4 ? `rgba(88,166,255,${alpha})` : `rgba(240,136,62,${alpha})`;
+      ctx.lineWidth = 1 + vis * 5;
+      ctx.beginPath();
+      ctx.moveTo(leftX + 50, positions[i]);
+      ctx.bezierCurveTo(leftX + 50 + midGap * 0.3, positions[i], rightX - 50 - midGap * 0.3, positions[j], rightX - 50, positions[j]);
+      ctx.stroke();
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    const hlL = hoveredSide === 'left' && hoveredIdx === i;
+    const hlR = hoveredSide === 'right' && hoveredIdx === i;
+    ctx.font = `${hlL ? 'bold ' : ''}13px monospace`;
+    ctx.fillStyle = hlL ? '#238636' : '#e6edf3';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(tokens[i], leftX + 45, positions[i]);
+    ctx.font = `${hlR ? 'bold ' : ''}13px monospace`;
+    ctx.fillStyle = hlR ? '#238636' : '#e6edf3';
+    ctx.textAlign = 'left';
+    ctx.fillText(tokens[i], rightX - 45, positions[i]);
+  }
+
+  ctx.fillStyle = '#8b949e'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Query (from)', leftX, padY - 20);
+  ctx.fillText('Key (to)', rightX, padY - 20);
+}
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const tokens = getTokens();
+  const n = tokens.length;
+  const tokenH = 36, gap = 12, padX = 160, padY = 60, midGap = 300;
+  const leftX = padX, rightX = padX + midGap + 100;
+  hoveredIdx = -1; hoveredSide = null;
+  for (let i = 0; i < n; i++) {
+    const py = padY + i * (tokenH + gap) + tokenH / 2;
+    if (Math.abs(y - py) < tokenH / 2) {
+      hoveredSide = x < (leftX + rightX) / 2 ? 'left' : 'right';
+      hoveredIdx = i; break;
+    }
+  }
+  drawBipartite();
+});
+canvas.addEventListener('mouseleave', () => { hoveredIdx = -1; hoveredSide = null; drawBipartite(); });
+
+function drawQKVTable() {
+  const tokens = getTokens();
+  const head = getHead();
+  const { Q, K, V } = generateData(tokens, head);
+  const fmt = v => v.toFixed(2);
+  let html = '<table id="qkv-table"><tr><th>Token</th><th class="vec-q">Q [d_k=4]</th><th class="vec-k">K [d_k=4]</th><th class="vec-v">V [d_v=4]</th></tr>';
+  for (let i = 0; i < tokens.length; i++) {
+    html += `<tr><td style="color:#f0f6fc;font-weight:bold">${tokens[i]}</td>`;
+    html += `<td class="vec-q">[${Q[i].map(fmt).join(', ')}]</td>`;
+    html += `<td class="vec-k">[${K[i].map(fmt).join(', ')}]</td>`;
+    html += `<td class="vec-v">[${V[i].map(fmt).join(', ')}]</td></tr>`;
+  }
+  html += '</table>';
+  document.getElementById('qkv-section').innerHTML = html;
+}
+
+function buildMatrixTable(matrix, tokens) {
+  const n = tokens.length;
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    if (matrix[i][j] < min) min = matrix[i][j];
+    if (matrix[i][j] > max) max = matrix[i][j];
+  }
+  const range = max - min || 1;
+  let html = '<table class="matrix-table"><tr><th></th>';
+  for (let j = 0; j < n; j++) html += `<th>${tokens[j]}</th>`;
+  html += '</tr>';
+  for (let i = 0; i < n; i++) {
+    html += `<tr><th>${tokens[i]}</th>`;
+    for (let j = 0; j < n; j++) {
+      const t = (matrix[i][j] - min) / range;
+      const r = Math.round(t * 255), g = Math.round((t < 0.5 ? t * 2 : 1) * 200), b = Math.round((1 - t) * 180);
+      const fg = t > 0.6 ? '#000' : '#e6edf3';
+      html += `<td style="background:rgb(${r},${g},${b});color:${fg}">${matrix[i][j].toFixed(2)}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+function drawAll() {
+  const tokens = getTokens();
+  const head = getHead();
+  const { rawScores, softScores } = generateData(tokens, head);
+  drawBipartite();
+  drawQKVTable();
+  document.getElementById('matrix-raw').innerHTML = buildMatrixTable(rawScores, tokens);
+  document.getElementById('matrix-soft').innerHTML = buildMatrixTable(softScores, tokens);
+}
+
+// Init
+const headSelect = document.getElementById('headSelect');
+for (let i = 0; i < numHeads; i++) headSelect.innerHTML += `<option value="${i}">Head ${i+1}</option>`;
+document.getElementById('sentenceSelect').addEventListener('change', drawAll);
+headSelect.addEventListener('change', drawAll);
+document.getElementById('randomize').addEventListener('click', () => { data = {}; drawAll(); });
+drawAll();
+
+/* ===================== Stage walkthrough of one query token ===================== */
+const AW = 852, ACW = 46, ACH = 26, ACG = 4, AROW = 38, AROWS_Y = 120;
+const BARW = 220;
+/* Three column layouts the widget moves between.
+   A: vectors first, bars parked on the right (stage 2).
+   B: vectors gone, bars alone and centred (stages 3-4).
+   C: bars pushed left, values and their scaled copies to the right (stages 5-6). */
+const LAY_A = { label: 126, cells: 140, prod: 352, score: 600, bar: 616 };
+const LAY_B = { label: 232, cells: 140, prod: 352, score: 300, bar: 316 };
+const LAY_C = { label: 96, cells: 400, prod: 616, score: 150, bar: 160 };
+const DOT_LAY = 1.4, DOT_PER = 1.25, COLLAPSE = 1.1;
+const ACOL = {
+  q: '#58a6ff', k: '#f0883e', v: '#7ee787', txt: '#e6edf3', mut: '#8b949e',
+  bg: '#0d1117', line: '#30363d', hi: '#f0f6fc', acc: '#3fb950'
+};
+const ACAPTION = {
+  query: 'Every token is projected into a query vector — the question it asks of the sentence: which positions should I read from? Four numbers, because d_k = 4 inside each head.',
+  dots: 'Every key in the sentence is laid out first, then the query walks down them. Each dot product is built one component at a time: a key pointing the same way as the query scores high, one pointing the other way scores negative.',
+  scale: 'The vectors have done their job, so they drop away and the scores take the centre. Now divide every one by √d_k. A dot product over d_k terms has variance d_k, so without this the spread would grow with head width and shove softmax into a corner. Here d_k = 4, so every score halves.',
+  softmax: 'Exponentiate and normalise across the row, measured from the same zero axis. Every bar ends up on the positive side, the negative ones sweeping across zero on the way, and the lengths now add up to exactly the half-track: a mixing recipe over the sentence.',
+  values: 'Only now do the values matter. The bars slide left to make room, each token\u2019s value vector appears beside its weight, and the scaled copy a × v to the right of that is what gets added up.',
+  out: 'That sum is the new vector for this token: same position, now carrying information pulled from the rest of the sentence. This is what gets passed on to the next layer.'
+};
+
+const aCanvas = document.getElementById('anim');
+const actx = aCanvas.getContext('2d');
+const aQuerySel = document.getElementById('anim-query');
+const aPlayBtn = document.getElementById('anim-play');
+const aSeek = document.getElementById('anim-seek');
+const aStageEl = document.getElementById('anim-stage');
+const aCapEl = document.getElementById('anim-caption');
+
+let aH = 480, aTime = 0, aPlaying = true, aSpeed = 1, aPrevTs = 0;
+let aQuery = 0, aStages = [], aTotal = 1, aLastStage = null;
+
+const aClamp = t => t < 0 ? 0 : t > 1 ? 1 : t;
+const aEase = t => { t = aClamp(t); return t * t * (3 - 2 * t); };
+const aLerp = (a, b, t) => a + (b - a) * t;
+
+function aBuildStages() {
+  const n = getTokens().length;
+  const defs = [
+    ['query', '1 / 6 · The query vector', 2.0],
+    ['dots', '2 / 6 · Dot product against every key', DOT_LAY + n * DOT_PER],
+    ['scale', '3 / 6 · Divide by √d_k', COLLAPSE + 1.9],
+    ['softmax', '4 / 6 · Softmax into weights', 2.4],
+    ['values', '5 / 6 · Weighted sum of the values', COLLAPSE + n * 0.85 + 1.4],
+    ['out', '6 / 6 · The new representation', 2.0]
+  ];
+  let t = 0;
+  aStages = defs.map(([id, label, dur]) => { const s = { id, label, start: t, dur }; t += dur; return s; });
+  aTotal = t;
+  aSeek.max = String(Math.round(aTotal * 100));
+}
+
+function aStageAt(time) {
+  for (let i = aStages.length - 1; i >= 0; i--) {
+    if (time >= aStages[i].start || i === 0) {
+      return { i, s: aStages[i], p: aClamp((time - aStages[i].start) / aStages[i].dur) };
+    }
+  }
+}
+
+function aSize() {
+  aH = AROWS_Y + getTokens().length * AROW + 112;
+  const dpr = window.devicePixelRatio || 1;
+  aCanvas.width = Math.round(AW * dpr);
+  aCanvas.height = Math.round(aH * dpr);
+  actx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function aRect(x, y, w, h, r) {
+  actx.beginPath();
+  actx.moveTo(x + r, y);
+  actx.arcTo(x + w, y, x + w, y + h, r);
+  actx.arcTo(x + w, y + h, x, y + h, r);
+  actx.arcTo(x, y + h, x, y, r);
+  actx.arcTo(x, y, x + w, y, r);
+  actx.closePath();
+}
+
+function aText(str, x, y, color, size, align) {
+  actx.fillStyle = color;
+  actx.font = `${size}px monospace`;
+  actx.textAlign = align || 'left';
+  actx.textBaseline = 'middle';
+  actx.fillText(str, x, y);
+}
+
+function aHeadSwap(x, from, to, f) {
+  if (f < 1) {
+    actx.save(); actx.globalAlpha = 1 - f;
+    aText(from, x, 106, ACOL.mut, 10, 'right');
+    actx.restore();
+  }
+  if (f > 0) {
+    actx.save(); actx.globalAlpha = f;
+    aText(to, x, 106, ACOL.mut, 10, 'right');
+    actx.restore();
+  }
+}
+
+function aCells(x, y, vals, color, o) {
+  o = o || {};
+  const reveal = o.reveal === undefined ? vals.length : o.reveal;
+  const hi = o.highlight === undefined ? -1 : o.highlight;
+  actx.save();
+  actx.globalAlpha = o.alpha === undefined ? 1 : o.alpha;
+  for (let d = 0; d < vals.length && d < reveal; d++) {
+    const cx = x + d * (ACW + ACG);
+    actx.fillStyle = d === hi ? 'rgba(63,185,80,0.20)' : ACOL.bg;
+    aRect(cx, y, ACW, ACH, 4);
+    actx.fill();
+    actx.strokeStyle = d === hi ? ACOL.acc : ACOL.line;
+    actx.lineWidth = 1;
+    actx.stroke();
+    aText(vals[d].toFixed(2), cx + ACW / 2, y + ACH / 2, color, 11, 'center');
+  }
+  actx.restore();
+}
+
+/* One bar per row, always measured from a fixed zero axis in the middle of its
+   track. Positive points right in blue, negative points left in red. Softmax is
+   drawn as nothing more than the value changing. */
+function aBar(y, barX, val, maxAbs, alpha) {
+  const axis = barX + BARW / 2, half = BARW / 2 - 4;
+  actx.save();
+  actx.globalAlpha = alpha;
+  actx.strokeStyle = ACOL.line;
+  actx.lineWidth = 1;
+  actx.beginPath(); actx.moveTo(axis, y); actx.lineTo(axis, y + ACH); actx.stroke();
+  const w = (val / maxAbs) * half;
+  actx.fillStyle = val >= 0 ? 'rgba(88,166,255,0.82)' : 'rgba(248,81,73,0.78)';
+  aRect(Math.min(axis, axis + w), y + 6, Math.max(1.5, Math.abs(w)), ACH - 12, 2);
+  actx.fill();
+  actx.restore();
+}
+
+function aMix(p0, p1, t) {
+  return {
+    label: aLerp(p0.label, p1.label, t),
+    cells: aLerp(p0.cells, p1.cells, t),
+    prod: aLerp(p0.prod, p1.prod, t),
+    score: aLerp(p0.score, p1.score, t),
+    bar: aLerp(p0.bar, p1.bar, t)
+  };
+}
+
+function aStrip(tokens, y) {
+  actx.font = '13px monospace';
+  const widths = tokens.map(t => Math.max(56, actx.measureText(t).width + 24));
+  const total = widths.reduce((a, b) => a + b, 0) + (tokens.length - 1) * 8;
+  let x = (AW - total) / 2;
+  tokens.forEach((t, i) => {
+    const w = widths[i], isQ = i === aQuery;
+    aRect(x, y, w, 28, 6);
+    actx.fillStyle = isQ ? 'rgba(88,166,255,0.16)' : '#161b22';
+    actx.fill();
+    actx.strokeStyle = isQ ? ACOL.q : ACOL.line;
+    actx.lineWidth = isQ ? 1.6 : 1;
+    actx.stroke();
+    actx.font = (isQ ? 'bold ' : '') + '13px monospace';
+    aText(t, x + w / 2, y + 14, isQ ? ACOL.hi : ACOL.mut, 13, 'center');
+    x += w + 8;
+  });
+}
+
+function aFooter(stage) {
+  if (aLastStage === stage.id) return;
+  aLastStage = stage.id;
+  aStageEl.textContent = stage.label;
+  aCapEl.textContent = ACAPTION[stage.id];
+}
+
+function aDraw() {
+  const tokens = getTokens();
+  const d = generateData(tokens, getHead());
+  const n = tokens.length, sq = Math.sqrt(dK);
+  const { s: stage, p } = aStageAt(aTime);
+  const id = stage.id;
+  aFooter(stage);
+  actx.clearRect(0, 0, AW, aH);
+  aStrip(tokens, 14);
+
+  const raw = d.rawScores[aQuery];
+  const soft = d.softScores[aQuery];
+  const maxDot = Math.max(1e-6, ...raw.map(v => Math.abs(v * sq)));
+  const tt = p * stage.dur;
+
+  // Stage 2 has two phases: lay every key vector out, then sweep down them.
+  const sweep = id === 'dots' ? (tt - DOT_LAY) / DOT_PER : n;
+  let liveRow = -1, liveComp = -1;
+  if (id === 'dots' && sweep >= 0) {
+    const j = Math.floor(sweep);
+    if (j < n) {
+      const pr = aClamp((sweep - j - 0.1) / 0.6) * dK;
+      if (pr > 0 && pr < dK) { liveRow = j; liveComp = Math.floor(pr); }
+    }
+  }
+
+  // Which layout we are in, and how far the vectors have faded.
+  let pos, vecA;
+  if (id === 'query' || id === 'dots') { pos = LAY_A; vecA = 1; }
+  else if (id === 'scale') {
+    const L = aEase(tt / COLLAPSE);
+    pos = aMix(LAY_A, LAY_B, L);
+    pos.cells = LAY_A.cells;
+    pos.prod = LAY_A.prod;
+    vecA = 1 - L;
+  } else if (id === 'softmax') { pos = LAY_B; vecA = 0; }
+  else if (id === 'values') {
+    pos = aMix(LAY_B, LAY_C, aEase(tt / COLLAPSE));
+    pos.cells = LAY_C.cells;
+    pos.prod = LAY_C.prod;
+    vecA = aEase((tt - 0.5) / 0.7);
+  } else { pos = LAY_C; vecA = 1; }
+
+  // How far through dividing by √d_k, and how far through softmax.
+  const scaleF = id === 'dots' ? 0
+    : id === 'scale' ? aEase((tt - COLLAPSE) / (stage.dur - COLLAPSE - 0.25))
+    : 1;
+  const softF = id === 'softmax' ? aEase((tt - 0.3) / (stage.dur - 0.75))
+    : id === 'values' || id === 'out' ? 1
+    : 0;
+
+  const qA = id === 'query' || id === 'dots' ? 1 : id === 'scale' ? vecA : 0;
+  if (qA > 0.02) {
+    const qReveal = id === 'query' ? Math.ceil(aEase((p - 0.15) / 0.45) * dK) : dK;
+    actx.save();
+    actx.globalAlpha = qA;
+    aText(`q("${tokens[aQuery]}")`, LAY_A.label, 68 + ACH / 2, ACOL.q, 12, 'right');
+    actx.restore();
+    aCells(LAY_A.cells, 68, d.Q[aQuery], ACOL.q, { reveal: qReveal, highlight: liveComp, alpha: qA });
+  }
+  if (id === 'query') return;
+
+  const keyPhase = id === 'dots' || id === 'scale' || id === 'softmax';
+  if (vecA > 0.02) {
+    actx.save();
+    actx.globalAlpha = vecA;
+    aText(keyPhase ? 'keys  k(token)' : 'values  v(token)', pos.cells, 106, ACOL.mut, 10);
+    if (id === 'dots' && sweep > -0.3) aText('q × k, elementwise', pos.prod, 106, ACOL.mut, 10);
+    if (!keyPhase) aText('a × v', pos.prod, 106, ACOL.mut, 10);
+    actx.restore();
+  }
+  // The score column keeps its old name until the thing it names has finished moving.
+  const H_DOT = 'q·k', H_SCORE = 'score = q·k / √d_k', H_WEIGHT = 'weight = softmax(q·k / √d_k)';
+  if (id === 'dots') aText(H_DOT, pos.score, 106, ACOL.mut, 10, 'right');
+  else if (id === 'scale') aHeadSwap(pos.score, H_DOT, H_SCORE, aEase((tt - COLLAPSE) / 0.35));
+  else if (id === 'softmax') aHeadSwap(pos.score, H_SCORE, H_WEIGHT, aEase((softF - 0.15) / 0.3));
+  else aText('weight', pos.score, 106, ACOL.mut, 10, 'right');
+
+  const acc = new Array(dK).fill(0);
+  const valSweep = id === 'values' ? (tt - COLLAPSE) / 0.85 : id === 'out' ? n + 2 : -1;
+
+  for (let j = 0; j < n; j++) {
+    const y = AROWS_Y + j * AROW;
+    const dot = raw[j] * sq;
+    const prods = () => d.Q[aQuery].map((qv, c) => qv * d.K[j][c]);
+
+    if (id === 'dots') {
+      const jp = sweep - j;
+      let appear = 1;
+      if (tt < DOT_LAY) {
+        appear = aEase((tt - j * (0.9 / n)) / 0.4);
+        if (appear <= 0) continue;
+      }
+      const pending = sweep >= 0 && jp < 0;
+      const active = liveRow === j;
+      aText(tokens[j], pos.label, y + ACH / 2, pending ? ACOL.mut : active ? ACOL.hi : ACOL.txt, 12, 'right');
+      aCells(pos.cells, y, d.K[j], ACOL.k, {
+        alpha: appear * (pending ? 0.45 : 1),
+        highlight: active ? liveComp : -1
+      });
+      const shown = sweep < 0 ? 0 : active ? liveComp : jp >= 0.7 ? dK : 0;
+      if (shown > 0) {
+        const pr = prods();
+        aCells(pos.prod, y, pr, ACOL.txt, { alpha: appear, reveal: shown });
+        const settled = jp >= 0.7;
+        const partial = pr.slice(0, shown).reduce((a, b) => a + b, 0);
+        aText(settled ? dot.toFixed(2) : partial.toFixed(2), pos.score, y + ACH / 2,
+              settled ? ACOL.txt : ACOL.mut, 12, 'right');
+        if (settled) aBar(y, pos.bar, dot, maxDot, 1);
+      }
+      continue;
+    }
+
+    if (keyPhase) {
+      // Collapse, then halve every score, then let the values become weights.
+      const score = aLerp(dot, raw[j], scaleF);
+      const val = aLerp(score, soft[j], softF);
+      const scaleRef = aLerp(maxDot, 1, softF);
+      aText(tokens[j], pos.label, y + ACH / 2, ACOL.txt, 12, 'right');
+      if (vecA > 0.02) {
+        aCells(pos.cells, y, d.K[j], ACOL.k, { alpha: vecA });
+        aCells(pos.prod, y, prods(), ACOL.txt, { alpha: 0.3 * vecA });
+      }
+      aText(val.toFixed(2), pos.score, y + ACH / 2, ACOL.txt, 12, 'right');
+      aBar(y, pos.bar, val, scaleRef, 1);
+      continue;
+    }
+
+    const a = aClamp(aEase((valSweep - j) / 0.6));
+    aText(tokens[j], pos.label, y + ACH / 2, ACOL.txt, 12, 'right');
+    aText(soft[j].toFixed(2), pos.score, y + ACH / 2, ACOL.txt, 12, 'right');
+    aBar(y, pos.bar, soft[j], 1, 1);
+    if (vecA > 0.02) {
+      aCells(pos.cells, y, d.V[j], ACOL.v, { alpha: vecA * (0.45 + 0.55 * a) });
+      aCells(pos.prod, y, d.V[j].map(v => v * soft[j]), ACOL.acc, { alpha: vecA * (0.2 + 0.8 * a) });
+    }
+    for (let c = 0; c < dK; c++) acc[c] += d.V[j][c] * soft[j] * a;
+  }
+
+  if (!keyPhase && vecA > 0.02) {
+    const oy = AROWS_Y + n * AROW + 30;
+    const w = dK * (ACW + ACG) - ACG;
+    actx.save();
+    actx.globalAlpha = vecA;
+    actx.strokeStyle = ACOL.line;
+    actx.lineWidth = 1;
+    actx.beginPath();
+    actx.moveTo(pos.prod, oy - 12);
+    actx.lineTo(pos.prod + w, oy - 12);
+    actx.stroke();
+    aText('Σ', pos.prod - 16, oy + ACH / 2, ACOL.hi, 14, 'right');
+    aText(`new vector for "${tokens[aQuery]}"`, pos.prod, oy + ACH + 16, ACOL.mut, 11);
+    actx.restore();
+    aCells(pos.prod, oy, acc, ACOL.hi, { alpha: vecA });
+  }
+}
+
+function aSetPlaying(on) {
+  if (on && aTime >= aTotal) aTime = 0;
+  aPlaying = on;
+  aPlayBtn.textContent = on ? '⏸ Pause' : aTime >= aTotal ? '↺ Replay' : '▶ Play';
+}
+
+function aJump(time) {
+  aTime = Math.max(0, Math.min(aTotal, time));
+  aSeek.value = String(Math.round(aTime * 100));
+  aSetPlaying(false);
+  aDraw();
+}
+
+function aSyncTokens() {
+  const tokens = getTokens();
+  if (aQuery >= tokens.length) aQuery = 0;
+  aQuerySel.innerHTML = tokens.map((t, i) => `<option value="${i}">${t}</option>`).join('');
+  aQuerySel.value = String(aQuery);
+}
+
+function aReset(play) {
+  aBuildStages();
+  aSize();
+  aTime = 0;
+  aLastStage = null;
+  aSeek.value = '0';
+  aSetPlaying(play);
+  aDraw();
+}
+
+aQuerySel.addEventListener('change', () => { aQuery = parseInt(aQuerySel.value); aReset(true); });
+aPlayBtn.addEventListener('click', () => aSetPlaying(!aPlaying));
+document.getElementById('anim-next').addEventListener('click', () => {
+  const { i } = aStageAt(aTime);
+  aJump(i + 1 < aStages.length ? aStages[i + 1].start + 0.001 : aTotal);
+});
+document.getElementById('anim-prev').addEventListener('click', () => {
+  const { i, p } = aStageAt(aTime);
+  aJump(p > 0.08 ? aStages[i].start + 0.001 : aStages[Math.max(0, i - 1)].start + 0.001);
+});
+aSeek.addEventListener('input', () => aJump(parseInt(aSeek.value) / 100));
+const aSpeedEl = document.getElementById('anim-speed');
+aSpeedEl.addEventListener('input', () => {
+  aSpeed = parseFloat(aSpeedEl.value);
+  document.getElementById('anim-speed-v').textContent = aSpeed.toFixed(2).replace(/0$/, '') + '×';
+});
+document.getElementById('sentenceSelect').addEventListener('change', () => { aSyncTokens(); aReset(true); });
+headSelect.addEventListener('change', () => aReset(true));
+document.getElementById('randomize').addEventListener('click', () => aReset(true));
+
+function aFrame(ts) {
+  const dt = aPrevTs ? Math.min(0.05, (ts - aPrevTs) / 1000) : 0;
+  aPrevTs = ts;
+  if (aPlaying) {
+    aTime += dt * aSpeed;
+    if (aTime >= aTotal) { aTime = aTotal; aSetPlaying(false); }
+    aSeek.value = String(Math.round(aTime * 100));
+    aDraw();
+  }
+  requestAnimationFrame(aFrame);
+}
+
+aSyncTokens();
+aReset(true);
+requestAnimationFrame(aFrame);
+</script>
+</body>
+</html>
